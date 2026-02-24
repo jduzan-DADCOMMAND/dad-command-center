@@ -1,7 +1,7 @@
 // DAD Command Center — Service Worker
 // Caches the app for full offline use on all devices
 
-const CACHE = 'dad-cmd-v1';
+const CACHE = 'dad-cmd-v2';
 const ASSETS = [
   './',
   './index.html',
