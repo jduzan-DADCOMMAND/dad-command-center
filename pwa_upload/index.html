@@ -211,8 +211,39 @@ body{font-family:var(--font-body);background:var(--grey1);color:var(--text);min-
       <div class="nav-sub">Duzan Architecture + Design</div>
     </div>
   </div>
-  <div class="nav-date" id="navDate"></div>
+  <div style="display:flex;align-items:center;gap:8px">
+    <div id="navDate" class="nav-date"></div>
+    <button onclick="showDriveSyncPanel()" id="driveSyncBtn"
+      style="background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.25);
+             color:#fff;padding:5px 10px;border-radius:20px;font-size:11px;font-weight:600;
+             cursor:pointer;display:flex;align-items:center;gap:5px;white-space:nowrap">
+      <span id="driveSyncDot" style="font-size:9px">⚪</span>
+      <span id="driveSyncLabel">SYNC</span>
+    </button>
+  </div>
 </nav>
+
+<!-- ══ DRIVE SYNC PANEL (modal) ══════════════════════════════════════════ -->
+<div id="driveSyncOverlay" onclick="hideDriveSyncPanel()"
+  style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:500"></div>
+<div id="driveSyncPanel"
+  style="display:none;position:fixed;top:56px;right:12px;width:300px;background:#fff;
+         border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,.25);z-index:501;padding:18px">
+  <div style="font-weight:700;color:#0a1628;font-size:14px;margin-bottom:4px">☁ Google Drive Sync</div>
+  <div id="drivePanelStatus" style="font-size:12px;font-weight:600;margin-bottom:12px;color:#888">⚪ Not configured</div>
+  <div style="font-size:11px;color:#888;margin-bottom:8px">Paste your Apps Script URL to sync data across all devices</div>
+  <input id="drive-url-input" type="url" placeholder="https://script.google.com/macros/s/..."
+    style="width:100%;padding:9px;border:1px solid #ddd;border-radius:8px;font-size:12px;
+           box-sizing:border-box;margin-bottom:8px" oninput="this.value=this.value.trim()">
+  <div style="display:flex;gap:8px;margin-bottom:8px">
+    <button onclick="saveDriveURL()" style="flex:1;background:#0a1628;color:#fff;border:none;
+      padding:9px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer">Save & Connect</button>
+    <button onclick="forceDriveSync()" style="flex:1;background:#d4a843;color:#0a1628;border:none;
+      padding:9px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer">↻ Sync Now</button>
+  </div>
+  <button onclick="clearDriveURL()" style="width:100%;background:none;border:1px solid #ddd;
+    color:#888;padding:7px;border-radius:8px;font-size:11px;cursor:pointer">Disconnect Drive</button>
+</div>
 
 <main class="main">
 
@@ -476,17 +507,9 @@ body{font-family:var(--font-body);background:var(--grey1);color:var(--text);min-
 
   <!-- Drive Sync Settings -->
   <div class="section-header" style="margin-top:20px"><div class="section-title">☁ GOOGLE DRIVE SYNC</div></div>
-  <div class="card" style="margin-bottom:10px">
-    <div style="font-size:12px;color:var(--grey4);margin-bottom:10px">All data auto-saves to your Command Center folder in Google Drive. Paste your Apps Script Web App URL below.</div>
-    <div id="drive-status" style="font-size:12px;font-weight:600;margin-bottom:10px;color:var(--grey4)">⚪ Not configured</div>
-    <input id="drive-url-input" type="url" placeholder="https://script.google.com/macros/s/..." 
-      style="width:100%;padding:10px;border:1px solid var(--grey2);border-radius:8px;font-size:12px;box-sizing:border-box;margin-bottom:8px"
-      oninput="this.value=this.value.trim()">
-    <div style="display:flex;gap:8px">
-      <button onclick="saveDriveURL()" style="flex:1;background:var(--navy);color:white;border:none;padding:10px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">Save & Connect</button>
-      <button onclick="forceDriveSync()" style="flex:1;background:var(--gold);color:var(--navy);border:none;padding:10px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">↻ Sync Now</button>
-    </div>
-    <button onclick="clearDriveURL()" style="width:100%;margin-top:8px;background:none;border:1px solid var(--grey2);color:var(--grey4);padding:8px;border-radius:8px;font-size:12px;cursor:pointer">Disconnect Drive</button>
+  <div class="card" style="margin-bottom:10px;text-align:center">
+    <div style="font-size:13px;color:var(--grey4);margin-bottom:10px">Drive sync is now managed from the <strong>SYNC button</strong> in the top navigation bar — always accessible from any tab.</div>
+    <button onclick="hideDriveSyncPanel();showDriveSyncPanel()" style="background:var(--navy);color:white;border:none;padding:10px 20px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">☁ Open Drive Sync</button>
   </div>
 </div>
 
@@ -2074,7 +2097,7 @@ function renderDashboard() {
   const pastDue=DB.projects.filter(p=>p.status==='PAST DUE');
   const completed=DB.projects.filter(p=>p.status==='COMPLETED');
   const pipeline=DB.projects.filter(p=>['PROPOSED','FUTURE','PENDING'].includes(p.status));
-  const col2026=DB.payments.filter(p=>p.year===2026).reduce((s,p)=>s+p.amount,0);
+  const col2026=DB.payments.filter(p=>Number(p.year)===yr).reduce((s,p)=>s+Number(p.amount||0),0);
   const pdAmt=pastDue.reduce((s,p)=>s+(p.outstanding||0),0);
   const contracted=DB.projects.filter(p=>['ACTIVE','PAST DUE','COMPLETED','BILLED'].includes(p.status)&&p.year===yr).reduce((s,p)=>s+(p.contract||0),0);
   const proposalPipe=(DB.proposals||[]).filter(p=>!['ACTIVE','WON','LOST'].includes(p.status)).reduce((s,p)=>s+(p.value||0),0);
@@ -2089,7 +2112,7 @@ function renderDashboard() {
   document.getElementById('kpi-total').textContent=DB.projects.length;
   document.getElementById('kpi-completed').textContent=completed.length;
   const months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  const totals=months.map((_,mi)=>DB.payments.filter(p=>{const d=new Date(p.date+'T12:00:00');return d.getFullYear()===2026&&d.getMonth()===mi;}).reduce((s,p)=>s+p.amount,0));
+  const totals=months.map((_,mi)=>DB.payments.filter(p=>{const d=new Date(p.date+'T12:00:00');return d.getFullYear()===yr&&d.getMonth()===mi;}).reduce((s,p)=>s+Number(p.amount||0),0));
   const mx=Math.max(...totals,1);
   const cm=new Date().getMonth();
   document.getElementById('monthChart').innerHTML=months.map((m,mi)=>`<div class="month-row"><div class="month-label">${m}</div><div class="month-bar-track"><div class="month-bar ${mi===cm?'gold':''}" style="width:${(totals[mi]/mx*100).toFixed(1)}%"></div></div><div class="month-value">${totals[mi]>0?fmt(totals[mi]):'—'}</div></div>`).join('');
@@ -2519,9 +2542,17 @@ function markInvoicePaid(id) {
     notes:'Auto-logged when invoice marked paid'
   });
   // Update project collected/outstanding/status
-  const projInvsAfter=DB.invoices.filter(x=>x.client===inv.client&&(x.project===inv.project||!inv.project));
+  // Match project by client + project name (robust matching)
+  const normInvProj=(inv.project||'').trim().toLowerCase();
+  const pidx=DB.projects.findIndex(p=>{
+    const clientMatch=p.client===inv.client||(p.client||'').toUpperCase().trim()===(inv.client||'').toUpperCase().trim();
+    if(!clientMatch) return false;
+    if(!normInvProj) return true; // if no project name, match first client project
+    const normProjName=(p.project||'').trim().toLowerCase();
+    return normProjName===normInvProj||normProjName.includes(normInvProj)||normInvProj.includes(normProjName);
+  });
+  const projInvsAfter=DB.invoices.filter(x=>(x.client===inv.client||((x.client||'').toUpperCase().trim()===(inv.client||'').toUpperCase().trim()))&&(x.project===inv.project||!normInvProj));
   const allNowPaid=projInvsAfter.every(x=>x.status==='COMPLETED'||x.id===inv.id);
-  const pidx=DB.projects.findIndex(p=>p.client===inv.client&&(p.project===inv.project||!inv.project||p.project.includes(inv.project)||inv.project.includes(p.project)));
   if(pidx>=0){
     DB.projects[pidx].collected=(DB.projects[pidx].collected||0)+wasBalance;
     DB.projects[pidx].outstanding=Math.max(0,(DB.projects[pidx].outstanding||0)-wasBalance);
@@ -2872,6 +2903,36 @@ function sendProposalForReview() {
   if (!DB.proposals) DB.proposals = [];
   DB.proposals.push({id:Date.now(), date:d.date, company:d.company, contact:d.contact,
     project:d.proposalFor, value:d.value, type:d.type, status:'SENT', data:d});
+  // Also add/update a PROPOSED project record so it shows in Projects tab
+  const normClient=(d.company||'').toUpperCase().trim();
+  const projName=d.proposalFor||d.company||'';
+  const existingProjIdx=DB.projects.findIndex(p=>
+    p.client===normClient&&(p.project===projName||!projName)
+  );
+  if(existingProjIdx<0){
+    DB.projects.push({
+      id:getNextId(DB.projects),
+      year:new Date().getFullYear(),
+      client:normClient,
+      project:projName,
+      city:d.projAddr||'',
+      state:'IL',
+      propVal:d.value||0,
+      contract:0,
+      billed:0,
+      collected:0,
+      outstanding:0,
+      status:'PROPOSED',
+      notes:'Proposal sent '+d.date
+    });
+    toast('✓ Proposal sent + added to Projects as PROPOSED', 3500);
+  } else {
+    // Update existing project to PROPOSED if it was just a future/pipeline entry
+    if(['PROPOSED','FUTURE','PENDING'].includes(DB.projects[existingProjIdx].status)){
+      DB.projects[existingProjIdx].propVal=d.value||0;
+      DB.projects[existingProjIdx].status='PROPOSED';
+    }
+  }
   saveDB();
 
   const ejsSub = 'DAD PROPOSAL — ' + (d.proposalFor || d.company) + ' — ' + fmtM(d.value) + ' — ' + fmtDateLong(d.date);
@@ -3365,6 +3426,17 @@ function saveProposalDraft() {
   const d=getProposalData();
   if(!DB.proposals) DB.proposals=[];
   DB.proposals.push({id:Date.now(),date:d.date,company:d.company||'Draft',contact:d.contact,project:d.proposalFor,value:d.value,type:d.type,status:'DRAFT',data:d});
+  // Add as PROPOSED project if client + project filled in
+  if(d.company&&d.proposalFor){
+    const normClient=(d.company||'').toUpperCase().trim();
+    const existIdx=DB.projects.findIndex(p=>p.client===normClient&&p.project===d.proposalFor);
+    if(existIdx<0){
+      DB.projects.push({id:getNextId(DB.projects),year:new Date().getFullYear(),
+        client:normClient,project:d.proposalFor,city:d.projAddr||'',state:'IL',
+        propVal:d.value||0,contract:0,billed:0,collected:0,outstanding:0,
+        status:'PROPOSED',notes:'Draft proposal '+d.date});
+    }
+  }
   saveDB(); closeDetail('proposalScreen'); toast('✓ Proposal saved as draft');
 }
 function setProposalStatus(id,newStatus){
@@ -3474,53 +3546,61 @@ setTimeout(function(){
 function initDriveStatus() {
   const url = localStorage.getItem('dadDriveSyncURL') || '';
   const input = document.getElementById('drive-url-input');
-  const status = document.getElementById('drive-status');
-  if (!input || !status) return;
+  if (input) input.value = url;
   if (url) {
-    input.value = url;
     DRIVE_SYNC_URL = url;
-    status.textContent = '🟢 Connected';
-    status.style.color = '#2a7a2a';
+    setDriveSyncUI('🟢','SYNCED','#2a7a2a','🟢 Connected');
   } else {
-    status.textContent = '⚪ Not configured';
-    status.style.color = 'var(--grey4)';
+    setDriveSyncUI('⚪','SYNC','#888','⚪ Not configured');
   }
+}
+function setDriveSyncUI(dot, label, color, statusText) {
+  const d = document.getElementById('driveSyncDot');
+  const l = document.getElementById('driveSyncLabel');
+  const s = document.getElementById('drivePanelStatus');
+  if(d) d.textContent = dot;
+  if(l) l.textContent = label;
+  if(s){ s.textContent = statusText; s.style.color = color; }
+}
+function showDriveSyncPanel() {
+  document.getElementById('driveSyncOverlay').style.display = 'block';
+  document.getElementById('driveSyncPanel').style.display = 'block';
+}
+function hideDriveSyncPanel() {
+  document.getElementById('driveSyncOverlay').style.display = 'none';
+  document.getElementById('driveSyncPanel').style.display = 'none';
 }
 
 async function saveDriveURL() {
   const input = document.getElementById('drive-url-input');
-  const status = document.getElementById('drive-status');
   const url = (input.value || '').trim();
   if (!url) { toast('Paste your Apps Script URL first'); return; }
-  
-  status.textContent = '🔄 Testing connection...';
-  status.style.color = 'var(--grey4)';
-  
+  setDriveSyncUI('🔄','...','#888','🔄 Testing connection...');
   const ok = await testDriveConnection(url);
   if (ok) {
     DRIVE_SYNC_URL = url;
     localStorage.setItem('dadDriveSyncURL', url);
-    status.textContent = '🟢 Connected';
-    status.style.color = '#2a7a2a';
+    setDriveSyncUI('🟢','SYNCED','#2a7a2a','🟢 Connected');
     await driveSave();
     toast('✓ Google Drive connected & data saved!', 3000);
   } else {
-    status.textContent = '🔴 Connection failed — check URL';
-    status.style.color = '#cc2200';
+    setDriveSyncUI('🔴','ERROR','#cc2200','🔴 Connection failed — check URL');
     toast('⚠ Could not connect. Check the URL and make sure the script is deployed as Anyone.', 5000);
   }
 }
 
 async function forceDriveSync() {
   if (!DRIVE_SYNC_URL) { toast('Connect Google Drive first'); return; }
+  setDriveSyncUI('🔄','...','#888','🔄 Syncing...');
   toast('Syncing...', 1500);
   const loaded = await driveLoad();
   if (loaded) {
     checkPastDue();
     saveDB();
-    renderDashboard();
+    setDriveSyncUI('🟢','SYNCED','#2a7a2a','🟢 Synced just now');
     toast('✓ Synced from Google Drive', 2500);
   } else {
+    setDriveSyncUI('🔴','ERROR','#cc2200','🔴 Sync failed');
     toast('⚠ Sync failed — check connection', 3000);
   }
 }
@@ -3529,9 +3609,9 @@ function clearDriveURL() {
   if (!confirm('Disconnect Google Drive sync?')) return;
   DRIVE_SYNC_URL = '';
   localStorage.removeItem('dadDriveSyncURL');
-  document.getElementById('drive-url-input').value = '';
-  document.getElementById('drive-status').textContent = '⚪ Not configured';
-  document.getElementById('drive-status').style.color = 'var(--grey4)';
+  const input = document.getElementById('drive-url-input');
+  if(input) input.value = '';
+  setDriveSyncUI('⚪','SYNC','#888','⚪ Not configured');
   toast('Drive sync disconnected');
 }
 
