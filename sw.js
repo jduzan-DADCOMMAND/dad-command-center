@@ -1,5 +1,5 @@
 // DAD Command Center — Service Worker
-const CACHE = 'dad-cmd-v5';
+const CACHE = 'dad-cmd-v6';
 const ASSETS = [
   './',
   './index.html',

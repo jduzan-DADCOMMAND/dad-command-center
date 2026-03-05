@@ -3370,72 +3370,10 @@ function checkAndSendTestReport() {
 }
 
 function exportData() {
-  const rows=[['CLIENT','PROJECT','CITY','STATE','CONTRACT','BILLED','COLLECTED','OUTSTANDING','STATUS','NOTES'],...DB.projects.map(p=>[p.client,p.project,p.city,p.state,p.contract||p.propVal,p.billed,p.collected,p.outstanding,p.status,p.notes])];
-  const csv=rows.map(r=>r.map(v=>`"${String(v||'').replace(/"/g,'""')}"`).join(',')).join('\n');
-  const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
-  a.download='DAD_Projects_'+new Date().toISOString().slice(0,10)+'.csv'; a.click();
-  toast('✓ Exported to CSV');
+  // Full 7-tab Excel workbook
+  downloadWeeklyXLSX();
 }
 
-// ══ PROPOSAL ═════════════════════════════════════════════════════════════════
-const STANDARD_SCOPE=`Phase 1 — Programming & Schematic Design (20% of total fee)
-
-Programming Part 1:
-• Identify all important factors for impression and feel of the customer experience
-• Identify owner expectations for all needed, desired or required components
-• Identify space relationships important to the work flow for staff and customers
-• Identify minimum or maximum size requirements for various spaces of the building
-• Identify all exterior needs required for building
-• Identify color palette standards, interior and exterior, and/or materials preferred
-
-Schematic Drawing Part 2:
-• Use program data to develop up to 3 total floorplans for review and discussion
-• Drawings shall show basic rough drawn space relationships, door openings, window locations, room names, future spaces planned
-• Once 1 floor plan is determined after changes, collaboration and sign off, move on to Design Development
-• This process could consume approximately 2–3 weeks from initial programming meeting
-
-Phase 2 — Design Development (20% of total fee)
-
-• More refined floor plan with detailing for spaces and interior layouts expected
-• Code study data would apply here and affect the overall building drawings
-• Exterior elevation options shall be created for review and discussion
-• Once DD documents are approved and signed off, move on to Construction Documentation
-• This process could consume approximately 4–5 weeks from initial approved SD phase efforts
-
-Phase 3 — Construction Documents (60% of total fee)
-
-• Refine in more detail the floorplan and elevations
-• Create other plans needed: roof, foundation, finish and reflected ceiling plans, etc.
-• Create all wall and building sections and details as needed
-• Create all schedules for equipment and components: doors, windows, finishes, etc.
-• Collaborate with all team members for coordination of drawings (MEP and civil)
-• Work toward a 50% review set to be sent to the customer for review, comment and approvals
-• Once go-ahead and comments are received, work toward 100% construction drawing set
-• Engage local municipality to determine requirements for permit submittals
-• Register, complete and submit drawings to the municipality on the owner's behalf
-• This process could consume 5–6 weeks depending on outside factors`;
-
-const STANDARD_CLAR=`1. Excludes any services not listed above.
-2. Signage design, Landscape design and engineering, or any other engineering services not listed above are not included.
-3. Kitchen equipment design and layout are not included. A kitchen equipment specialist is expected to be available for consult.
-4. Sprinkler designs and layouts, if required, are not included and are typically design build.
-5. Delivery of municipal programs, including but not limited to: city tax incentive and enterprise zone determinations are not included.
-6. Architect construction observation, administration and management and/or CM services are not included herein.
-7. All drawing printing costs are a reimbursable expense and shall be billed separately.
-8. Contractor bidding & Negotiating Services are not included.`;
-
-const TC_SECTIONS=[
-  {title:"RESPONSIBILITIES OF THE PARTIES",body:"The Owner and the Architect shall cooperate with one another to fulfill their respective obligations under this Agreement. Both parties shall endeavor to maintain good working relationships among all members of the Project team.<br><br><strong>OWNER</strong><br>The Owner's Designated Representative shall be authorized to act on the Owner's behalf with respect to the Project. The Owner or the Owner's Designated Representative shall render decisions in a timely manner pertaining to documents submitted by the Architect in order to avoid unreasonable delay. Unless otherwise provided under this Agreement, the Owner shall provide full information in a timely manner regarding requirements for and limitations on the Project. The Owner shall furnish to the Architect, within 15 days after receipt of a written request, information necessary and relevant for the Architect to evaluate, give notice of or enforce lien rights. The Owner shall furnish all legal, insurance and accounting services, including auditing services that may be reasonably necessary at any time for the Project to meet the Owner's needs and interests.<br><br><strong>ARCHITECT</strong><br>The Architect's Designated Representative shall be authorized to act on the Architect's behalf with respect to the Project. The Architect's services shall be performed as expeditiously as is consistent with professional skill and care and the orderly progress of the Project. The Architect shall maintain the confidentiality of information specifically designated as confidential by the Owner. The Architect shall review laws, codes, and regulations applicable to the Architect's services."},
-  {title:"COST OF THE WORK",body:"The Cost of the Work shall be the total cost or, to the extent the Project is not completed, the estimated cost to the Owner of all elements of the Project designed or specified by the Architect. The Cost of the Work shall include the cost at current market rates of labor and materials furnished by the Owner and equipment designed, specified, selected or specially provided for by the Architect, including the costs of management or supervision of construction or installation provided by a separate construction manager or contractor, plus a reasonable allowance for their overhead and profit. The Cost of the Work does not include the compensation of the Architect and the Architect's consultants, the costs of the land, rights-of-way and financing or other costs that are the responsibility of the Owner."},
-  {title:"INSTRUMENTS OF SERVICE",body:"Drawings, specifications and other documents, including those in electronic form, prepared by the Architect and the Architect's consultants are Instruments of Service for use solely with respect to this project. The Architect and the Architect's consultants shall be deemed the authors and owners of their respective Instruments of Service and shall retain all common law, statutory and other reserved rights, including copyrights. Upon execution of this Agreement, the Architect grants to the Owner a nonexclusive license to reproduce the Architect's Instruments of Service solely for purposes of constructing, using and maintaining the Project, provided that the Owner shall comply with all obligations, including prompt payment of all sums when due, under this Agreement. Any termination of this Agreement prior to completion of the Project shall terminate this license. The Owner shall not use the Instruments of Service for future additions or alterations to this Project or for other projects without the prior written agreement of the Architect."},
-  {title:"CHANGE IN SERVICES",body:"Change in Services of the Architect may be accomplished after execution of this Agreement, without invalidating the Agreement, if mutually agreed in writing, if required by circumstances beyond the Architect's control, or if the Architect's services are affected as described herein. Change in Services shall entitle the Architect to an adjustment in compensation. Circumstances include: changes in Owner instructions; enactment of codes or laws requiring changes; decisions of the Owner not rendered in a timely manner; significant change in Project size, quality or budget; failure of performance on the part of the Owner; or changes in the information contained in the project proposal."},
-  {title:"MEDIATION",body:"Any claim, dispute or other matter in question arising out of or related to this Agreement shall be subject to mediation as a condition precedent to arbitration or the institution of legal or equitable proceedings by either party. The Owner and Architect shall endeavor to resolve claims, disputes and other matters in question between them by mediation which, unless the parties mutually agree otherwise, shall be in accordance with the Construction Industry Mediation Rules of the American Arbitration Association currently in effect. The parties shall share the mediator's fee and any filing fees equally. Agreements reached in mediation shall be enforceable as settlement agreements in any court having jurisdiction thereof."},
-  {title:"ARBITRATION",body:"Any claim, dispute or other matter in question arising out of or related to this Agreement shall be subject to arbitration. Claims not resolved by mediation shall be decided by arbitration in accordance with the Construction Industry Arbitration Rules of the American Arbitration Association currently in effect. The award rendered by the arbitrator or arbitrators shall be final, and judgment may be entered upon it in accordance with applicable law in any court having jurisdiction thereof."},
-  {title:"CLAIMS FOR CONSEQUENTIAL DAMAGES",body:"The Architect and the Owner waive consequential damages for claims, disputes or other matters in question arising out of or relating to this Agreement. This mutual waiver is applicable, without limitation, to all consequential damages due to either party's termination in accordance with the Termination and Suspension section herein."},
-  {title:"MISCELLANEOUS PROVISIONS",body:"This Agreement shall be governed by the law of the principal place of business of the Architect. Terms in this Agreement shall have the same meaning as those in AIA Document A201. Nothing contained in this Agreement shall create a contractual relationship with or a cause of action in favor of a third party against either the Owner or Architect. The Architect shall have the right to include photographic or artistic representations of the design of the Project among the Architect's promotional and professional materials. The Owner and Architect respectively bind themselves, their partners, successors, assigns and legal representatives to the other party. Neither the Owner nor the Architect shall assign this Agreement without the written consent of the other."},
-  {title:"TERMINATION OR SUSPENSION",body:"If the Owner fails to make payments to the Architect in accordance with this Agreement, such failure shall be considered substantial nonperformance and cause for termination or, at the Architect's option, cause for suspension of performance of services. The Architect shall give seven days written notice to the Owner prior to suspension. If the Project is suspended for more than 90 consecutive days, the Architect may terminate this Agreement by giving not less than seven days written notice. This Agreement may be terminated by either party upon not less than seven days written notice should the other party fail substantially to perform in accordance with the terms of this Agreement."},
-  {title:"PAYMENTS TO THE ARCHITECT",body:"Payments on account of services rendered and for Reimbursable Expenses incurred shall be made monthly upon presentation of the Architect's statement of services. Reimbursable Expenses include: transportation and authorized travel; fees paid for securing approval of authorities having jurisdiction; reproductions, plots, postage and delivery; expense of overtime work authorized in advance; renderings, models, BIM and mock-ups requested by the Owner; and other similar direct Project-related expenditures at 1.0 times the expenses incurred.<br><br><strong>All invoices are due upon receipt. Amounts unpaid after 10 days will be listed as past due and shall bear interest at the rate of 20% per annum.</strong><br><br>This Agreement entered into as of the day and year first written above."}
-];
 
 function buildTCHTML(firmName) {
   const cols=[];
