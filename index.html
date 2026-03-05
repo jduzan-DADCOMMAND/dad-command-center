@@ -2003,8 +2003,10 @@ function loadDB() {
   } catch(e) {}
 }
 function saveDB() {
+  checkPastDue();          // Always re-evaluate past due on every save
+  reconcileFinancials();   // Recalculate project billed/collected/outstanding from source
   try { localStorage.setItem('dadCMD', JSON.stringify(DB)); } catch(e) {}
-  driveSave(); // Auto-sync to Google Drive if configured
+  driveSave();
   renderAll();
 }
 function renderAll() {
@@ -2047,17 +2049,67 @@ function openDetail(id) { document.getElementById(id).classList.add('open'); }
 function closeDetail(id) { document.getElementById(id).classList.remove('open'); }
 document.querySelectorAll('.modal-overlay').forEach(o=>o.addEventListener('click',e=>{if(e.target===o)o.classList.remove('open')}));
 
+// ══ RECONCILE PROJECT FINANCIALS ════════════════════════════════════════════
+// Recalculates billed/collected/outstanding for every project from source data.
+// This ensures edits to invoices and payments always propagate correctly.
+function reconcileFinancials() {
+  DB.projects.forEach(proj => {
+    const cNorm = (proj.client||'').toUpperCase().trim();
+    const pNorm = (proj.project||'').toLowerCase().trim();
+
+    // All invoices matching this project
+    const projInvs = DB.invoices.filter(inv => {
+      const iNorm = (inv.client||'').toUpperCase().trim();
+      const ipNorm = (inv.project||'').toLowerCase().trim();
+      return iNorm === cNorm && (
+        ipNorm === pNorm || ipNorm.includes(pNorm) || pNorm.includes(ipNorm) || !ipNorm || !pNorm
+      );
+    });
+
+    // All payments matching this project
+    const projPays = DB.payments.filter(pay => {
+      const pyNorm = (pay.client||'').toUpperCase().trim();
+      return pyNorm === cNorm;
+    });
+
+    const totalBilled = projInvs.reduce((s,i) => s + Number(i.amount||0), 0);
+    const totalCollected = projPays.reduce((s,p) => s + Number(p.amount||0), 0);
+    const totalOutstanding = Math.max(0, totalBilled - totalCollected);
+
+    proj.billed = totalBilled;
+    proj.collected = totalCollected;
+    proj.outstanding = totalOutstanding;
+
+    // Auto-complete project if all invoices paid and nothing outstanding
+    const allPaid = projInvs.length > 0 && projInvs.every(i => i.status === 'COMPLETED');
+    if (allPaid && totalOutstanding === 0 && ['BILLED','PAST DUE','ACTIVE'].includes(proj.status)) {
+      proj.status = 'COMPLETED';
+    }
+    // If project was COMPLETED but now has outstanding balance, reactivate
+    if (proj.status === 'COMPLETED' && totalOutstanding > 0 && totalBilled > 0) {
+      proj.status = 'BILLED';
+    }
+  });
+}
+
 // ══ PAST DUE CHECK — 10 days ═════════════════════════════════════════════════
 function checkPastDue() {
   const now = new Date();
   DB.invoices.forEach(inv=>{
     if(inv.status==='COMPLETED') return;
-    if(!inv.date||inv.balance<=0) return;
+    if(!inv.date) return;
+    const balance = Number(inv.balance||0) || Number(inv.amount||0);
+    if(balance <= 0) return;
     const days = Math.floor((now - new Date(inv.date+'T12:00:00'))/(1000*60*60*24));
     if(days>10) {
       inv.status='PAST DUE';
-      const proj=DB.projects.find(p=>p.client===inv.client&&p.status==='BILLED');
-      if(proj) proj.status='PAST DUE';
+      // Match project regardless of current project status
+      const proj=DB.projects.find(p=>{
+        const cMatch=(p.client||'').toUpperCase().trim()===(inv.client||'').toUpperCase().trim();
+        const pMatch=!inv.project||!p.project||(p.project||'').toLowerCase().includes((inv.project||'').toLowerCase())||(inv.project||'').toLowerCase().includes((p.project||'').toLowerCase());
+        return cMatch && pMatch;
+      });
+      if(proj && proj.status!=='COMPLETED') proj.status='PAST DUE';
     }
   });
 }
@@ -2504,6 +2556,8 @@ function saveEditInvoice() {
   } else {
     paidAt=null; // cleared if status moved back off COMPLETED
   }
+  const prevStatus = DB.invoices[idx].status;
+  const prevAmount = Number(DB.invoices[idx].amount||0);
   DB.invoices[idx]={
     ...DB.invoices[idx],
     invNum:document.getElementById('ei-invnum').value.trim(),
@@ -2515,7 +2569,34 @@ function saveEditInvoice() {
     paidAt:paidAt,
     notes:document.getElementById('ei-notes').value.trim()
   };
-  saveDB(); closeModal('editInvoiceModal'); renderInvoices(); renderDashboard();
+  const inv = DB.invoices[idx];
+  // If transitioning TO completed, create a payment record for the chart
+  if(newStatus==='COMPLETED' && prevStatus!=='COMPLETED') {
+    const payAmt = amount || prevAmount;
+    const payDate = paidAtInput || inv.date || new Date().toISOString().slice(0,10);
+    const payYear = new Date(payDate+'T12:00:00').getFullYear();
+    // Only add if no payment record already exists for this invoice
+    const alreadyHasPay = DB.payments.some(p=>p.invNum===inv.invNum&&(p.client||'').toUpperCase().trim()===(inv.client||'').toUpperCase().trim());
+    if(!alreadyHasPay && payAmt>0) {
+      DB.payments.push({
+        id:getNextId(DB.payments),
+        client:inv.client,
+        project:inv.project||'',
+        invNum:inv.invNum||String(inv.id),
+        amount:payAmt,
+        date:payDate,
+        year:payYear,
+        method:'Check',
+        notes:'Auto-logged from invoice edit'
+      });
+    }
+  }
+  // If transitioning AWAY from completed, remove auto-logged payment record
+  if(prevStatus==='COMPLETED' && newStatus!=='COMPLETED') {
+    const ri = DB.payments.findIndex(p=>p.invNum===inv.invNum&&p.notes==='Auto-logged from invoice edit'&&(p.client||'').toUpperCase().trim()===(inv.client||'').toUpperCase().trim());
+    if(ri>=0) DB.payments.splice(ri,1);
+  }
+  saveDB(); closeModal('editInvoiceModal');
   toast('✓ Invoice updated');
 }
 function markInvoicePaid(id) {
@@ -2527,9 +2608,10 @@ function markInvoicePaid(id) {
   inv.paid=inv.amount||0;
   inv.paidAt=new Date().toISOString();
   // Create a matching payment record so it shows in Payments tab
-  const d=new Date();
-  const dateStr=d.toISOString().split('T')[0];
-  const yr=d.getFullYear();
+  // Use invoice date for chart accuracy (not today)
+  const payDate = inv.paidAt ? inv.paidAt.slice(0,10) : new Date().toISOString().slice(0,10);
+  const dateStr = payDate;
+  const yr = new Date(payDate+'T12:00:00').getFullYear();
   const proj=DB.projects.find(p=>p.client===inv.client)||{};
   DB.payments.push({
     id:getNextId(DB.payments),
@@ -3012,90 +3094,133 @@ function buildXLSXWorkbook() {
   if(typeof XLSX === 'undefined'){ toast('⚠ Excel library not loaded'); return null; }
   const wb = XLSX.utils.book_new();
   const now = new Date();
-  const fmt2 = n => n==null ? 0 : Number(n)||0;
-
-  // ── DASHBOARD SUMMARY ──
-  const activeProj = DB.projects.filter(p=>p.status==='ACTIVE');
-  const pastDueProj = DB.projects.filter(p=>p.status==='PAST DUE');
+  const n2 = v => v==null ? 0 : Number(v)||0;
+  const fmtD = s => s ? new Date(s+'T12:00:00').toLocaleDateString('en-US') : '';
   const yr = now.getFullYear();
-  const yrPayments = DB.payments.filter(p=>p.year===yr);
-  const yrInvoices = DB.invoices.filter(i=>new Date(i.date).getFullYear()===yr);
-  const totalOutstanding = DB.invoices.filter(i=>i.status!=='COMPLETED').reduce((s,i)=>s+fmt2(i.balance),0);
-  const totalCollectedYr = yrPayments.reduce((s,p)=>s+fmt2(p.amount),0);
+
+  // ── 1. DASHBOARD SUMMARY ──────────────────────────────────────────────────
+  const activeProj   = DB.projects.filter(p=>p.status==='ACTIVE');
+  const pastDueProj  = DB.projects.filter(p=>p.status==='PAST DUE');
+  const billedProj   = DB.projects.filter(p=>p.status==='BILLED');
+  const completedProj= DB.projects.filter(p=>p.status==='COMPLETED');
+  const pipelineProj = DB.projects.filter(p=>['PROPOSED','FUTURE','PENDING'].includes(p.status));
+  const yrPayments   = DB.payments.filter(p=>Number(p.year)===yr);
+  const yrInvoices   = DB.invoices.filter(i=>new Date(i.date+'T12:00:00').getFullYear()===yr);
+  const totalOutstanding = DB.invoices.filter(i=>i.status!=='COMPLETED').reduce((s,i)=>s+n2(i.balance),0);
+  const totalCollectedYr = yrPayments.reduce((s,p)=>s+n2(p.amount),0);
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const monthlyTotals = months.map((_,mi)=>
+    DB.payments.filter(p=>{const d=new Date((p.date||'')+'T12:00:00');return d.getFullYear()===yr&&d.getMonth()===mi;})
+    .reduce((s,p)=>s+n2(p.amount),0)
+  );
   const dashData = [
-    ['DAD COMMAND CENTER — WEEKLY REPORT'],
+    ['DAD COMMAND CENTER — EXPORT'],
     ['Generated:', now.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'})+' at '+now.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})],
     [''],
-    ['METRIC','VALUE'],
-    ['Active Projects', activeProj.length],
-    ['Past Due Projects', pastDueProj.length],
-    ['Total Projects', DB.projects.length],
+    ['── PROJECT STATUS SUMMARY ──────────────────────'],
+    ['STATUS','COUNT','TOTAL OUTSTANDING'],
+    ['Active',          activeProj.length,    activeProj.reduce((s,p)=>s+n2(p.outstanding),0)],
+    ['Past Due',        pastDueProj.length,   pastDueProj.reduce((s,p)=>s+n2(p.outstanding),0)],
+    ['Billed',          billedProj.length,    billedProj.reduce((s,p)=>s+n2(p.outstanding),0)],
+    ['Completed',       completedProj.length, 0],
+    ['Pipeline',        pipelineProj.length,  pipelineProj.reduce((s,p)=>s+n2(p.contract||p.propVal),0)],
+    ['Total Projects',  DB.projects.length,   ''],
     [''],
-    ['Outstanding Balance', totalOutstanding],
-    ['Collected YTD ('+yr+')', totalCollectedYr],
-    ['Total Invoices ('+yr+')', yrInvoices.length],
-    ['Total Payments ('+yr+')', yrPayments.length],
+    ['── FINANCIALS (' + yr + ') ──────────────────────────────'],
+    ['Collected YTD',        totalCollectedYr],
+    ['Total Outstanding',    totalOutstanding],
+    ['Invoices Issued ('+yr+')', yrInvoices.length],
+    ['Payments Received ('+yr+')', yrPayments.length],
     [''],
-    ['ACTIVE PROJECTS','CLIENT','STATUS','CONTRACT','BILLED','COLLECTED','OUTSTANDING'],
-    ...activeProj.map(p=>[p.project,p.client,p.status,fmt2(p.contract||p.propVal),fmt2(p.billed),fmt2(p.collected),fmt2(p.outstanding)]),
+    ['── MONTHLY COLLECTIONS (' + yr + ') ─────────────────────'],
+    ['MONTH','COLLECTED'],
+    ...months.map((m,mi)=>[m, monthlyTotals[mi]]),
+    ['TOTAL', monthlyTotals.reduce((s,v)=>s+v,0)],
     [''],
-    ['PAST DUE PROJECTS','CLIENT','STATUS','OUTSTANDING'],
-    ...pastDueProj.map(p=>[p.project,p.client,p.status,fmt2(p.outstanding)])
+    ['── PAST DUE DETAIL ──────────────────────────────'],
+    ['PROJECT','CLIENT','STATUS','CONTRACT','OUTSTANDING','INVOICE DATE'],
+    ...pastDueProj.map(p=>{
+      const inv=DB.invoices.find(i=>(i.client||'').toUpperCase().trim()===(p.client||'').toUpperCase().trim()&&i.status==='PAST DUE');
+      return [p.project,p.client,p.status,n2(p.contract||p.propVal),n2(p.outstanding),inv?fmtD(inv.date):''];
+    })
   ];
   const wsDash = XLSX.utils.aoa_to_sheet(dashData);
-  wsDash['!cols'] = [{wch:35},{wch:30},{wch:15},{wch:15},{wch:15},{wch:15},{wch:15}];
+  wsDash['!cols'] = [{wch:38},{wch:20},{wch:18},{wch:16},{wch:16},{wch:16}];
   XLSX.utils.book_append_sheet(wb, wsDash, 'Dashboard');
 
-  // ── PROJECTS ──
+  // ── 2. PROJECTS ───────────────────────────────────────────────────────────
   const projHeaders = ['CLIENT','PROJECT','CITY','STATE','YEAR','STATUS','PROPOSAL VALUE','CONTRACT','BILLED','COLLECTED','OUTSTANDING','NOTES'];
-  const projRows = DB.projects.map(p=>[
-    p.client,p.project,p.city,p.state,p.year,p.status,
-    fmt2(p.propVal),fmt2(p.contract||p.propVal),fmt2(p.billed),fmt2(p.collected),fmt2(p.outstanding),p.notes||''
-  ]);
+  const projRows = [...DB.projects]
+    .sort((a,b)=>{ const order=['PAST DUE','ACTIVE','BILLED','COMPLETED','PROPOSED','FUTURE','PENDING','DEAD']; return (order.indexOf(a.status)||99)-(order.indexOf(b.status)||99); })
+    .map(p=>[p.client,p.project,p.city||'',p.state||'',p.year||'',p.status,n2(p.propVal),n2(p.contract||p.propVal),n2(p.billed),n2(p.collected),n2(p.outstanding),p.notes||'']);
   const wsProj = XLSX.utils.aoa_to_sheet([projHeaders,...projRows]);
-  wsProj['!cols'] = [{wch:25},{wch:35},{wch:15},{wch:8},{wch:8},{wch:12},{wch:16},{wch:14},{wch:12},{wch:12},{wch:14},{wch:30}];
+  wsProj['!cols'] = [{wch:26},{wch:35},{wch:15},{wch:7},{wch:7},{wch:12},{wch:16},{wch:14},{wch:12},{wch:12},{wch:14},{wch:35}];
   XLSX.utils.book_append_sheet(wb, wsProj, 'Projects');
 
-  // ── INVOICES ──
-  const invHeaders = ['INV #','CLIENT','PROJECT','DATE','AMOUNT','BALANCE','STATUS','PAID DATE','NOTES'];
-  const invRows = DB.invoices.map(i=>[
-    i.invNum,i.client,i.project,i.date,fmt2(i.amount),fmt2(i.balance),i.status,
-    i.paidAt ? new Date(i.paidAt).toLocaleDateString('en-US') : '',
-    i.notes||''
-  ]);
-  const wsInv = XLSX.utils.aoa_to_sheet([invHeaders,...invRows]);
-  wsInv['!cols'] = [{wch:8},{wch:25},{wch:30},{wch:12},{wch:12},{wch:12},{wch:12},{wch:14},{wch:30}];
+  // ── 3. INVOICES ───────────────────────────────────────────────────────────
+  const invHeaders = ['INV #','CLIENT','PROJECT','DATE','AMOUNT','PAID','BALANCE','STATUS','PAID DATE','NOTES'];
+  const invRows = [...DB.invoices]
+    .sort((a,b)=>{ const order=['PAST DUE','BILLED','ACTIVE','COMPLETED']; return (order.indexOf(a.status)||99)-(order.indexOf(b.status)||99); })
+    .map(i=>[i.invNum||'',i.client,i.project||'',fmtD(i.date),n2(i.amount),n2(i.paid),n2(i.balance),i.status,i.paidAt?new Date(i.paidAt).toLocaleDateString('en-US'):'',i.notes||'']);
+  const invTotRow = ['TOTALS','','','',invRows.reduce((s,r)=>s+r[4],0),invRows.reduce((s,r)=>s+r[5],0),invRows.reduce((s,r)=>s+r[6],0),'','',''];
+  const wsInv = XLSX.utils.aoa_to_sheet([invHeaders,...invRows,[''],invTotRow]);
+  wsInv['!cols'] = [{wch:8},{wch:26},{wch:30},{wch:12},{wch:12},{wch:12},{wch:12},{wch:12},{wch:14},{wch:35}];
   XLSX.utils.book_append_sheet(wb, wsInv, 'Invoices');
 
-  // ── PAYMENTS ──
-  const payHeaders = ['CLIENT','PROJECT','INV #','AMOUNT','DATE','YEAR','METHOD','NOTES'];
+  // ── 4. PAYMENTS ───────────────────────────────────────────────────────────
+  const payHeaders = ['DATE','CLIENT','PROJECT','INV #','AMOUNT','YEAR','METHOD','NOTES'];
   const payRows = [...DB.payments]
     .sort((a,b)=>(b.date?new Date(b.date+'T12:00:00'):new Date(0))-(a.date?new Date(a.date+'T12:00:00'):new Date(0)))
-    .map(p=>[p.client,p.project,p.invNum,fmt2(p.amount),p.date,p.year,p.method,p.notes||'']);
-  const payTotRow = ['TOTAL','','',payRows.reduce((s,r)=>s+r[3],0),'','','',''];
+    .map(p=>[fmtD(p.date),p.client,p.project||'',p.invNum||'',n2(p.amount),p.year||'',p.method||'',p.notes||'']);
+  const payTotRow = ['TOTAL','','','',payRows.reduce((s,r)=>s+r[4],0),'','',''];
   const wsPay = XLSX.utils.aoa_to_sheet([payHeaders,...payRows,[''],payTotRow]);
-  wsPay['!cols'] = [{wch:25},{wch:30},{wch:8},{wch:12},{wch:12},{wch:8},{wch:12},{wch:30}];
+  wsPay['!cols'] = [{wch:14},{wch:26},{wch:30},{wch:8},{wch:12},{wch:8},{wch:12},{wch:35}];
   XLSX.utils.book_append_sheet(wb, wsPay, 'Payments');
 
-  // ── JOB NOTES ──
-  const notesHeaders = ['CLIENT','PROJECT','DATE','NOTE'];
+  // ── 5. PROPOSALS ─────────────────────────────────────────────────────────
+  const propHeaders = ['DATE','COMPANY','CONTACT','PROJECT','TYPE','CONTRACT VALUE','DEPOSIT (30%)','STATUS','DESCRIPTION','SCOPE','CLARIFICATIONS'];
+  const propRows = [...(DB.proposals||[])]
+    .sort((a,b)=>new Date(b.date||0)-new Date(a.date||0))
+    .map(p=>{
+      const d=p.data||{};
+      return [
+        fmtD(p.date||d.date),
+        p.company||d.company||'',
+        p.contact||d.contact||'',
+        p.project||d.proposalFor||'',
+        p.type||d.type||'DAD',
+        n2(p.value||d.value),
+        n2((p.value||d.value||0)*0.3),
+        p.status||'',
+        d.description||'',
+        d.scope||'',
+        d.clarifications||''
+      ];
+    });
+  const wsProp = XLSX.utils.aoa_to_sheet([propHeaders,...propRows]);
+  wsProp['!cols'] = [{wch:12},{wch:26},{wch:22},{wch:30},{wch:10},{wch:16},{wch:14},{wch:10},{wch:40},{wch:50},{wch:50}];
+  XLSX.utils.book_append_sheet(wb, wsProp, 'Proposals');
+
+  // ── 6. JOB NOTES ──────────────────────────────────────────────────────────
+  const notesHeaders = ['DATE','CLIENT','PROJECT','NOTE'];
   const notesRows = [];
   DB.projects.forEach(p=>{
     (p.jobLog||[]).forEach(n=>{
-      notesRows.push([p.client, p.project, new Date(n.ts).toLocaleDateString('en-US'), n.text]);
+      notesRows.push([new Date(n.ts).toLocaleDateString('en-US'), p.client, p.project, n.text]);
     });
   });
-  notesRows.sort((a,b)=>new Date(b[2])-new Date(a[2]));
+  notesRows.sort((a,b)=>new Date(b[0])-new Date(a[0]));
   const wsNotes = XLSX.utils.aoa_to_sheet([notesHeaders,...notesRows]);
-  wsNotes['!cols'] = [{wch:25},{wch:30},{wch:14},{wch:60}];
+  wsNotes['!cols'] = [{wch:14},{wch:26},{wch:30},{wch:70}];
   XLSX.utils.book_append_sheet(wb, wsNotes, 'Job Notes');
 
-  // ── CONTACTS (project-linked + key contacts) ──
-  const keyContacts = DB.contacts.filter(c=>c.project||c.email||c.phone).slice(0,200);
+  // ── 7. CONTACTS ───────────────────────────────────────────────────────────
   const ctHeaders = ['COMPANY','NAME','PHONE','EMAIL','ADDRESS','CITY','STATE','PROJECT'];
-  const ctRows = keyContacts.map(c=>[c.company,c.name,c.phone||'',c.email||'',c.address||'',c.city||'',c.state||'',c.project||'']);
+  const ctRows = [...DB.contacts]
+    .sort((a,b)=>(a.company||'').localeCompare(b.company||''))
+    .map(c=>[c.company||'',c.name||'',c.phone||'',c.email||'',c.address||'',c.city||'',c.state||'',c.project||'']);
   const wsCt = XLSX.utils.aoa_to_sheet([ctHeaders,...ctRows]);
-  wsCt['!cols'] = [{wch:30},{wch:20},{wch:16},{wch:28},{wch:25},{wch:15},{wch:8},{wch:25}];
+  wsCt['!cols'] = [{wch:30},{wch:22},{wch:16},{wch:30},{wch:25},{wch:16},{wch:8},{wch:25}];
   XLSX.utils.book_append_sheet(wb, wsCt, 'Contacts');
 
   return wb;
