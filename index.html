@@ -378,7 +378,7 @@ body{font-family:var(--font-body);background:var(--grey1);color:var(--text);min-
   <div class="card" style="cursor:pointer;margin-bottom:10px" onclick="exportData()">
     <div style="display:flex;align-items:center;gap:12px">
       <div style="font-size:32px">📊</div>
-      <div><div style="font-weight:600;color:var(--navy)">Export to Spreadsheet</div><div style="font-size:12px;color:var(--grey4)">Download all data as CSV</div></div>
+      <div><div style="font-weight:600;color:var(--navy)">Export to Spreadsheet</div><div style="font-size:12px;color:var(--grey4)">Download full 7-tab Excel backup</div></div>
       <div style="margin-left:auto;color:var(--grey3)">›</div>
     </div>
   </div>
@@ -2892,17 +2892,18 @@ let DRIVE_SYNC_URL = localStorage.getItem('dadDriveSyncURL') || 'https://script.
 async function driveSave() {
   if (!DRIVE_SYNC_URL) return;
   try {
-    // Use GET with encoded data to avoid CORS preflight
-    const encoded = encodeURIComponent(JSON.stringify(DB));
-    const url = DRIVE_SYNC_URL + '?action=save&data=' + encoded;
-    // Use no-cors image trick for fire-and-forget save
-    const img = new Image();
-    img.src = url;
-    // Also try fetch with no-cors for the save
-    fetch(url, {mode:'no-cors'}).catch(()=>{});
-    console.log('Drive save triggered');
+    await fetch(DRIVE_SYNC_URL, {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ action: 'save', data: DB })
+    });
+    console.log('Drive save OK (POST)');
   } catch(e) {
-    console.warn('Drive save failed:', e);
+    try {
+      const encoded = encodeURIComponent(JSON.stringify(DB));
+      fetch(DRIVE_SYNC_URL + '?action=save&data=' + encoded, {mode:'no-cors'}).catch(()=>{});
+    } catch(e2) { console.warn('Drive save failed:', e2); }
   }
 }
 
@@ -3333,32 +3334,32 @@ function checkWeeklySchedule() {
   }
 }
 
-// ── Auto-sync twice daily (every 12 hours while app is open) ─────────────────
-const SYNC_INTERVAL_MS = 12 * 60 * 60 * 1000; // 12 hours
+// ── Auto-sync: load from Drive on every app open, then every 30 min ─────────
+const SYNC_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
 
-async function autoSync() {
-  if(!DRIVE_SYNC_URL) return; // Only if Drive is configured
+async function autoSync(forceLoad) {
+  if(!DRIVE_SYNC_URL) return;
   const now = Date.now();
   const lastSync = parseInt(localStorage.getItem('dadLastAutoSync') || '0');
-  if(now - lastSync < SYNC_INTERVAL_MS) return; // Not time yet
+  if(!forceLoad && (now - lastSync < SYNC_INTERVAL_MS)) return;
   console.log('Auto-sync running...');
-  setDriveSyncUI('🔄','...','#888','🔄 Auto-syncing...');
+  setDriveSyncUI('🔄','...','#888','🔄 Syncing...');
   const loaded = await driveLoad();
   if(loaded){
     checkPastDue();
+    reconcileFinancials();
     renderAll();
     localStorage.setItem('dadLastAutoSync', String(now));
-    setDriveSyncUI('🟢','SYNCED','#2a7a2a','🟢 Auto-synced ' + new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}));
-    toast('☁ Auto-synced with Google Drive', 2000);
+    setDriveSyncUI('🟢','SYNCED','#2a7a2a','🟢 Synced ' + new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}));
+    if(forceLoad) toast('☁ Data loaded from Google Drive', 2000);
   } else {
-    setDriveSyncUI('🔴','ERROR','#cc2200','🔴 Auto-sync failed');
+    setDriveSyncUI('🔴','OFFLINE','#cc2200','🔴 Drive unreachable');
   }
 }
 
-// Run auto-sync check every 30 minutes (catches the 12h window whenever app is open)
 function startAutoSyncScheduler() {
-  autoSync(); // Check immediately on load
-  setInterval(autoSync, 30 * 60 * 1000); // Then every 30 min
+  autoSync(true); // Force load on every app open
+  setInterval(()=>autoSync(false), SYNC_INTERVAL_MS);
 }
 
 function checkAndSendTestReport() {
@@ -3469,9 +3470,19 @@ function buildProposalHTML(d) {
   ${buildTCHTML(firmName)}`;
 }
 
-function openProposalScreen() {
+function resetProposalForm() {
+  const fields=['prop-for','prop-projaddr','prop-company','prop-contact',
+    'prop-clientaddr','prop-phone','prop-email','prop-desc','prop-scope',
+    'prop-value','prop-notes'];
+  fields.forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
   document.getElementById('prop-date').value=new Date().toISOString().slice(0,10);
+  document.getElementById('prop-type').value='DAD';
   document.getElementById('prop-clarifications').value=STANDARD_CLAR;
+  const dep=document.getElementById('prop-deposit-display');
+  if(dep) dep.textContent='$0';
+}
+function openProposalScreen() {
+  resetProposalForm();
   openDetail('proposalScreen');
 }
 function updateDeposit() {
@@ -3528,7 +3539,7 @@ function saveProposalDraft() {
         status:'PROPOSED',notes:'Draft proposal '+d.date});
     }
   }
-  saveDB(); closeDetail('proposalScreen'); toast('✓ Proposal saved as draft');
+  saveDB(); resetProposalForm(); closeDetail('proposalScreen'); toast('✓ Proposal saved as draft');
 }
 function setProposalStatus(id,newStatus){
   const idx=(DB.proposals||[]).findIndex(x=>x.id===id); if(idx<0) return;
@@ -3694,13 +3705,18 @@ async function forceDriveSync() {
   if (!DRIVE_SYNC_URL) { toast('Connect Google Drive first'); return; }
   setDriveSyncUI('🔄','...','#888','🔄 Syncing...');
   toast('Syncing...', 1500);
+  await driveSave();
+  await new Promise(r=>setTimeout(r,1500));
   const loaded = await driveLoad();
   if (loaded) {
     checkPastDue();
-    saveDB();
+    reconcileFinancials();
+    try { localStorage.setItem('dadCMD', JSON.stringify(DB)); } catch(e) {}
+    renderAll();
     localStorage.setItem('dadLastAutoSync', String(Date.now()));
-    setDriveSyncUI('🟢','SYNCED','#2a7a2a','🟢 Synced just now');
-    toast('✓ Synced from Google Drive', 2500);
+    const t=new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
+    setDriveSyncUI('🟢','SYNCED','#2a7a2a','🟢 Synced '+t);
+    toast('✓ Synced with Google Drive', 2500);
   } else {
     setDriveSyncUI('🔴','ERROR','#cc2200','🔴 Sync failed');
     toast('⚠ Sync failed — check connection', 3000);
