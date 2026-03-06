@@ -1943,76 +1943,87 @@ function buildReportHTML(range) {
   const fmtR = n => '$'+(n||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
   const label = fmtDateLong(from) + ' \u2014 ' + fmtDateLong(to);
 
-  const payments = DB.payments.filter(p => inRange(p.date));
-  const invoices = DB.invoices.filter(i => inRange(i.date));
+  const fromYr = dFrom.getFullYear();
+  const toYr   = dTo.getFullYear();
 
-  // ── Determine if we have detail data or need to fall back to history ───────
-  const fromYr = dFrom.getFullYear(), toYr = dTo.getFullYear();
-  const singleYear = fromYr === toYr;
-
-  // Pull matching history rows for the range
+  // Always pull history rows for this range — these are the SOURCE OF TRUTH totals
   const historyRows = (DB.history||[]).filter(h => h.year >= fromYr && h.year <= toYr);
+  const histInvoiced  = historyRows.reduce((s,h)=>s+(h.invoiced||0),0);
+  const histCollected = historyRows.reduce((s,h)=>s+(h.collected||0),0);
 
-  // Use history totals if no detail payments exist for this range
+  // Also pull detail records (may be partial)
+  const payments = DB.payments.filter(p => inRange(p.date));
+  const invoices  = DB.invoices.filter(i => inRange(i.date));
   const hasDetail = payments.length > 0 || invoices.length > 0;
-  const totalBilled     = hasDetail ? invoices.reduce((s,i)=>s+(i.amount||0),0)
-                        : historyRows.reduce((s,h)=>s+(h.invoiced||0),0);
-  const totalCollected  = hasDetail ? payments.reduce((s,p)=>s+(p.amount||0),0)
-                        : historyRows.reduce((s,h)=>s+(h.collected||0),0);
+
+  // Summary boxes: prefer history totals if we have them; fall back to detail
+  const hasHistory    = historyRows.length > 0;
+  const totalBilled   = hasHistory ? histInvoiced  : invoices.reduce((s,i)=>s+(i.amount||0),0);
+  const totalCollected = hasHistory ? histCollected : payments.reduce((s,p)=>s+(p.amount||0),0);
   const totalOutstanding = invoices.filter(i=>i.status!=='COMPLETED').reduce((s,i)=>s+(i.balance||0),0);
 
   // Row helper
   const tr = (cells, hdr=false) => `<tr>${cells.map(c=>`<t${hdr?'h':'d'} style="padding:7px 10px;border:1px solid #ddd;font-size:${hdr?'11':'12'}px;${hdr?'background:#0a1628;color:#fff;font-weight:600;text-transform:uppercase;letter-spacing:.5px;':''}text-align:${typeof c==='number'||String(c).startsWith('$')?'right':'left'}">${c}</t${hdr?'h':'d'}>`).join('')}</tr>`;
 
-  // ── Payments section ────────────────────────────────────────────────────────
+  // ── Payments detail table ────────────────────────────────────────────────────
   let paySection = '';
   if (hasDetail && payments.length) {
     const payRows = [...payments].sort((a,b)=>new Date(a.date)-new Date(b.date))
       .map(p=>tr([fmtDateLong(p.date),p.client,p.project||'','Inv #'+(p.invNum||'—'),p.method||'CHECK',fmtR(p.amount)])).join('');
+    const detailTotal = payments.reduce((s,p)=>s+(p.amount||0),0);
+    const isPartial   = hasHistory && Math.abs(detailTotal - histCollected) > 1;
     paySection = `
-    <div style="font-size:13px;font-weight:bold;color:#0a1628;border-bottom:2px solid #0a1628;padding-bottom:6px;margin-bottom:12px">PAYMENTS RECEIVED</div>
+    <div style="font-size:13px;font-weight:bold;color:#0a1628;border-bottom:2px solid #0a1628;padding-bottom:6px;margin-bottom:12px">
+      PAYMENTS RECEIVED${isPartial?` <span style="font-size:11px;font-weight:normal;color:#888">(partial records — full year total: ${fmtR(histCollected)})</span>`:''}
+    </div>
     <table style="width:100%;border-collapse:collapse;margin-bottom:24px">
       ${tr(['Date','Client','Project','Invoice','Method','Amount'],true)}
       ${payRows}
-      ${tr(['','','','','<strong>TOTAL</strong>','<strong>'+fmtR(totalCollected)+'</strong>'])}
+      ${tr(['','','','','<strong>DETAIL TOTAL</strong>','<strong>'+fmtR(detailTotal)+'</strong>'])}
+      ${isPartial?tr(['','','','','<strong style="color:#1a7a4a">HISTORY TOTAL</strong>','<strong style="color:#1a7a4a">'+fmtR(histCollected)+'</strong>']):''}
     </table>`;
-  } else if (!hasDetail && historyRows.length) {
-    const histPayRows = historyRows.sort((a,b)=>a.year-b.year)
+  } else if (hasHistory) {
+    const hRows = historyRows.sort((a,b)=>a.year-b.year)
       .map(h=>tr([String(h.year),'All clients','','','',fmtR(h.collected)])).join('');
     paySection = `
-    <div style="font-size:13px;font-weight:bold;color:#0a1628;border-bottom:2px solid #0a1628;padding-bottom:6px;margin-bottom:12px">PAYMENTS RECEIVED <span style="font-size:11px;font-weight:normal;color:#888">(annual summary)</span></div>
+    <div style="font-size:13px;font-weight:bold;color:#0a1628;border-bottom:2px solid #0a1628;padding-bottom:6px;margin-bottom:12px">PAYMENTS RECEIVED <span style="font-size:11px;font-weight:normal;color:#888">(annual summary from history)</span></div>
     <table style="width:100%;border-collapse:collapse;margin-bottom:24px">
       ${tr(['Year','','','','','Collected'],true)}
-      ${histPayRows}
-      ${historyRows.length>1?tr(['','','','','<strong>TOTAL</strong>','<strong>'+fmtR(totalCollected)+'</strong>']):''}
+      ${hRows}
+      ${historyRows.length>1?tr(['','','','','<strong>TOTAL</strong>','<strong>'+fmtR(histCollected)+'</strong>']):''}
     </table>`;
   } else {
     paySection = `<div style="margin-bottom:24px;padding:12px;background:#f8f9fc;border-radius:6px;font-size:12px;color:#888;text-align:center">No payment records for this period</div>`;
   }
 
-  // ── Invoices section ────────────────────────────────────────────────────────
+  // ── Invoices detail table ────────────────────────────────────────────────────
   let invSection = '';
   if (hasDetail && invoices.length) {
     const invRows = [...invoices].sort((a,b)=>new Date(a.date)-new Date(b.date))
       .map(i=>tr([fmtDateLong(i.date),i.client,i.project||'','Inv #'+i.invNum,fmtR(i.amount),
         fmtR(i.paid||0),i.status==='COMPLETED'?'$0.00':fmtR(i.balance||0),
         `<span style="padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600;background:${i.status==='COMPLETED'?'#d4edda':i.status==='PAST DUE'?'#f8d7da':'#fff3cd'};color:${i.status==='COMPLETED'?'#155724':i.status==='PAST DUE'?'#721c24':'#856404'}">${i.status}</span>`])).join('');
+    const detailInvTotal = invoices.reduce((s,i)=>s+(i.amount||0),0);
+    const isPartialInv   = hasHistory && Math.abs(detailInvTotal - histInvoiced) > 1;
     invSection = `
-    <div style="font-size:13px;font-weight:bold;color:#0a1628;border-bottom:2px solid #0a1628;padding-bottom:6px;margin-bottom:12px">INVOICES ISSUED</div>
+    <div style="font-size:13px;font-weight:bold;color:#0a1628;border-bottom:2px solid #0a1628;padding-bottom:6px;margin-bottom:12px">
+      INVOICES ISSUED${isPartialInv?` <span style="font-size:11px;font-weight:normal;color:#888">(partial records — full year total: ${fmtR(histInvoiced)})</span>`:''}
+    </div>
     <table style="width:100%;border-collapse:collapse;margin-bottom:28px">
       ${tr(['Date','Client','Project','Inv #','Amount','Paid','Balance','Status'],true)}
       ${invRows}
-      ${tr(['','','','','<strong>'+fmtR(totalBilled)+'</strong>','','<strong>'+fmtR(totalOutstanding)+'</strong>',''])}
+      ${tr(['','','','','<strong>'+fmtR(detailInvTotal)+'</strong>','','<strong>'+fmtR(totalOutstanding)+'</strong>',''])}
+      ${isPartialInv?tr(['','','<strong style="color:#1a7a4a">HISTORY TOTAL</strong>','','<strong style="color:#1a7a4a">'+fmtR(histInvoiced)+'</strong>','','','']):''}
     </table>`;
-  } else if (!hasDetail && historyRows.length) {
-    const histInvRows = historyRows.sort((a,b)=>a.year-b.year)
+  } else if (hasHistory) {
+    const hInvRows = historyRows.sort((a,b)=>a.year-b.year)
       .map(h=>tr([String(h.year),'All clients','','',fmtR(h.invoiced),'','',''])).join('');
     invSection = `
-    <div style="font-size:13px;font-weight:bold;color:#0a1628;border-bottom:2px solid #0a1628;padding-bottom:6px;margin-bottom:12px">INVOICES ISSUED <span style="font-size:11px;font-weight:normal;color:#888">(annual summary)</span></div>
+    <div style="font-size:13px;font-weight:bold;color:#0a1628;border-bottom:2px solid #0a1628;padding-bottom:6px;margin-bottom:12px">INVOICES ISSUED <span style="font-size:11px;font-weight:normal;color:#888">(annual summary from history)</span></div>
     <table style="width:100%;border-collapse:collapse;margin-bottom:28px">
       ${tr(['Year','','','','Invoiced','','',''],true)}
-      ${histInvRows}
-      ${historyRows.length>1?tr(['','','','','<strong>'+fmtR(totalBilled)+'</strong>','','','']):''}
+      ${hInvRows}
+      ${historyRows.length>1?tr(['','','','','<strong>'+fmtR(histInvoiced)+'</strong>','','','']):''}
     </table>`;
   } else {
     invSection = `<div style="margin-bottom:28px;padding:12px;background:#f8f9fc;border-radius:6px;font-size:12px;color:#888;text-align:center">No invoice records for this period</div>`;
@@ -2028,23 +2039,24 @@ function buildReportHTML(range) {
         <div style="font-size:11px;color:#666">Generated: ${new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}</div>
       </div>
     </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-bottom:28px">
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-bottom:${hasHistory?'8':'28'}px">
       <div style="border:2px solid #0a1628;border-radius:8px;padding:14px;text-align:center">
         <div style="font-size:10px;font-weight:600;letter-spacing:1px;color:#666;text-transform:uppercase;margin-bottom:6px">Total Billed</div>
         <div style="font-size:22px;font-weight:900;color:#0a1628">${fmtR(totalBilled)}</div>
-        <div style="font-size:11px;color:#666">${hasDetail?invoices.length+' invoice'+(invoices.length!==1?'s':''):historyRows.length+' year'+(historyRows.length!==1?'s':'')}</div>
+        <div style="font-size:11px;color:#666">${hasHistory?'from history':invoices.length+' invoice'+(invoices.length!==1?'s':'')}</div>
       </div>
       <div style="border:2px solid #1a7a4a;border-radius:8px;padding:14px;text-align:center">
         <div style="font-size:10px;font-weight:600;letter-spacing:1px;color:#666;text-transform:uppercase;margin-bottom:6px">Total Collected</div>
         <div style="font-size:22px;font-weight:900;color:#1a7a4a">${fmtR(totalCollected)}</div>
-        <div style="font-size:11px;color:#666">${hasDetail?payments.length+' payment'+(payments.length!==1?'s':''):'from history'}</div>
+        <div style="font-size:11px;color:#666">${hasHistory?'from history':payments.length+' payment'+(payments.length!==1?'s':'')}</div>
       </div>
       <div style="border:2px solid ${totalOutstanding>0?'#cc2200':'#ccc'};border-radius:8px;padding:14px;text-align:center">
         <div style="font-size:10px;font-weight:600;letter-spacing:1px;color:#666;text-transform:uppercase;margin-bottom:6px">Outstanding</div>
         <div style="font-size:22px;font-weight:900;color:${totalOutstanding>0?'#cc2200':'#666'}">${fmtR(totalOutstanding)}</div>
-        <div style="font-size:11px;color:#666">unpaid balance</div>
+        <div style="font-size:11px;color:#666">current open invoices</div>
       </div>
     </div>
+    ${hasHistory?`<div style="font-size:11px;color:#888;text-align:center;margin-bottom:20px;padding:6px;background:#f8f9fc;border-radius:4px">Summary totals sourced from annual history records. Detail records shown below where available.</div>`:''}
     ${paySection}
     ${invSection}
     <div style="border-top:2px solid #0a1628;padding-top:10px;display:flex;justify-content:space-between;align-items:center">
