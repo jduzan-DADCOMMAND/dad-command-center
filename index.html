@@ -200,6 +200,8 @@ body{font-family:var(--font-body);background:var(--grey1);color:var(--text);min-
       }
     })();
   </script>
+
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
 
@@ -374,6 +376,18 @@ body{font-family:var(--font-body);background:var(--grey1);color:var(--text);min-
   <div id="proposalList"></div>
   <div class="section-header" style="margin-top:8px"><div class="section-title">HISTORY</div></div>
   <div id="historyList"></div>
+  <div class="section-header" style="margin-top:8px"><div class="section-title">GOOGLE DRIVE BACKUP</div></div>
+  <div class="card" style="margin-bottom:10px;border-left:3px solid #1a73e8">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">
+      <div style="font-size:32px">☁️</div>
+      <div>
+        <div style="font-weight:600;color:var(--navy)">Save to Google Drive</div>
+        <div style="font-size:12px;color:var(--grey4)">Saves JSON backup + Excel workbook + HTML file to your <strong>X COMMAND DOWNLOADS</strong> folder</div>
+      </div>
+    </div>
+    <button class="btn btn-primary" style="width:100%;background:#1a73e8" onclick="saveToDrive()">☁️ Save to Drive Now</button>
+    <div style="font-size:11px;color:var(--grey4);margin-top:8px;text-align:center">Last synced: <span id="lastDriveSync">Never</span></div>
+  </div>
   <div class="section-header" style="margin-top:8px"><div class="section-title">EXPORT &amp; DATA</div></div>
   <div class="card" style="cursor:pointer;margin-bottom:10px" onclick="exportData()">
     <div style="display:flex;align-items:center;gap:12px">
@@ -749,6 +763,14 @@ const DOC_LOGO = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAkACQAAD/4QL0RXhpZgA
 // ══ DATA ════════════════════════════════════════════════════════════════════
 // ── DATA VERSION — increment this when you upload corrected data ─────────────
 // The HTML data will override localStorage whenever this version is newer.
+// ── GOOGLE DRIVE SYNC CONFIG ─────────────────────────────────────────────────
+// Replace 325871330137-b6bqe1sv0kl3678bvrfiburgrdnn8gh5.apps.googleusercontent.com with your OAuth Client ID from Google Cloud Console
+const DRIVE_CLIENT_ID = '325871330137-b6bqe1sv0kl3678bvrfiburgrdnn8gh5.apps.googleusercontent.com';
+const DRIVE_FOLDER_NAME = 'X COMMAND DOWNLOADS';
+const DRIVE_SCOPES = 'https://www.googleapis.com/auth/drive.file';
+let driveAccessToken = null;
+let driveTokenExpiry = 0;
+
 const DATA_VERSION = '2026-03-06-v1';
 
 const DB = {
@@ -2062,6 +2084,13 @@ function renderAll() {
   try { renderInvoices(); } catch(e){}
   try { renderPayments(); } catch(e){}
   try {
+    const ls = localStorage.getItem('lastDriveSync');
+    if (ls) {
+      const el = document.getElementById('lastDriveSync');
+      if (el) el.textContent = new Date(ls).toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'});
+    }
+  } catch(e) {}
+  try {
     const notesScreen=document.getElementById('screen-notes');
     if(notesScreen&&notesScreen.classList.contains('active')) renderNotes();
   } catch(e){}
@@ -3205,6 +3234,144 @@ function downloadReportXLSX() {
   const fname = 'DAD_Report_' + from + '_to_' + to + '.xlsx';
   XLSX.writeFile(wb, fname);
   toast('⬇️ Report downloaded: ' + fname, 3000);
+}
+
+// ══ GOOGLE DRIVE SYNC ═══════════════════════════════════════════════════════
+function driveSignIn(callback) {
+  if (DRIVE_CLIENT_ID === '325871330137-b6bqe1sv0kl3678bvrfiburgrdnn8gh5.apps.googleusercontent.com') {
+    toast('⚠ Add your Google Client ID first — see setup instructions', 5000);
+    return;
+  }
+  if (driveAccessToken && Date.now() < driveTokenExpiry) {
+    callback(driveAccessToken);
+    return;
+  }
+  try {
+    const client = google.accounts.oauth2.initTokenClient({
+      client_id: DRIVE_CLIENT_ID,
+      scope: DRIVE_SCOPES,
+      callback: (resp) => {
+        if (resp.error) { toast('⚠ Google sign-in failed: ' + resp.error, 4000); return; }
+        driveAccessToken = resp.access_token;
+        driveTokenExpiry = Date.now() + (resp.expires_in - 60) * 1000;
+        callback(driveAccessToken);
+      }
+    });
+    client.requestAccessToken();
+  } catch(e) {
+    toast('⚠ Google API not loaded — check internet connection', 4000);
+  }
+}
+
+async function driveGetOrCreateFolder(token, folderName) {
+  // Search for existing folder
+  const q = encodeURIComponent(`name='${folderName}' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
+  const res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)`, {
+    headers: { Authorization: 'Bearer ' + token }
+  });
+  const data = await res.json();
+  if (data.files && data.files.length > 0) return data.files[0].id;
+  // Create if not found
+  const createRes = await fetch('https://www.googleapis.com/drive/v3/files', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: folderName, mimeType: 'application/vnd.google-apps.folder' })
+  });
+  const folder = await createRes.json();
+  return folder.id;
+}
+
+async function driveUploadFile(token, folderId, filename, content, mimeType) {
+  // Check if file already exists in folder — if so, update it
+  const q = encodeURIComponent(`name='${filename}' and '${folderId}' in parents and trashed=false`);
+  const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)`, {
+    headers: { Authorization: 'Bearer ' + token }
+  });
+  const searchData = await searchRes.json();
+  const existingId = searchData.files && searchData.files.length > 0 ? searchData.files[0].id : null;
+
+  const metadata = existingId ? {} : { name: filename, parents: [folderId] };
+  const boundary = '-------314159265358979323846';
+  const body = `--${boundary}\r\nContent-Type: application/json\r\n\r\n${JSON.stringify(metadata)}\r\n--${boundary}\r\nContent-Type: ${mimeType}\r\n\r\n${content}\r\n--${boundary}--`;
+
+  const url = existingId
+    ? `https://www.googleapis.com/upload/drive/v3/files/${existingId}?uploadType=multipart`
+    : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
+
+  const uploadRes = await fetch(url, {
+    method: existingId ? 'PATCH' : 'POST',
+    headers: { Authorization: 'Bearer ' + token, 'Content-Type': `multipart/related; boundary="${boundary}"` },
+    body: body
+  });
+  return await uploadRes.json();
+}
+
+async function saveToDrive() {
+  toast('🔄 Connecting to Google Drive...', 2000);
+  driveSignIn(async (token) => {
+    try {
+      toast('🔄 Saving to Drive...', 2000);
+      const folderId = await driveGetOrCreateFolder(token, DRIVE_FOLDER_NAME);
+
+      // ── 1. Save JSON backup ──────────────────────────────────────────────
+      const timestamp = new Date().toISOString().slice(0,10);
+      const jsonStr = JSON.stringify(DB, null, 2);
+      await driveUploadFile(token, folderId, `DAD_CommandCenter_Backup_${timestamp}.json`, jsonStr, 'application/json');
+
+      // ── 2. Save Excel workbook ───────────────────────────────────────────
+      if (typeof XLSX !== 'undefined') {
+        const wb = buildXLSXWorkbook();
+        if (wb) {
+          const wbOut = XLSX.write(wb, { bookType: 'xlsx', type: 'binary' });
+          // Convert binary to base64 for Drive upload
+          const b64 = btoa(wbOut.split('').map(c => c.charCodeAt(0)).reduce((a, c) => { a.push(String.fromCharCode(c)); return a; }, []).join(''));
+          const xlsxMime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+          // Use blob upload for binary
+          const wbArray = new Uint8Array(wbOut.length);
+          for (let i = 0; i < wbOut.length; i++) wbArray[i] = wbOut.charCodeAt(i);
+          const xlsxBlob = new Blob([wbArray], { type: xlsxMime });
+
+          // Upload xlsx via resumable upload
+          const xlsxFilename = `DAD_CommandCenter_${timestamp}.xlsx`;
+          const q2 = encodeURIComponent(`name='${xlsxFilename}' and '${folderId}' in parents and trashed=false`);
+          const s2 = await (await fetch(`https://www.googleapis.com/drive/v3/files?q=${q2}&fields=files(id)`, {
+            headers: { Authorization: 'Bearer ' + token }
+          })).json();
+          const existXlsx = s2.files && s2.files.length > 0 ? s2.files[0].id : null;
+
+          const meta2 = existXlsx ? {} : { name: xlsxFilename, parents: [folderId] };
+          const form = new FormData();
+          form.append('metadata', new Blob([JSON.stringify(meta2)], { type: 'application/json' }));
+          form.append('file', xlsxBlob);
+
+          const xlsxUrl = existXlsx
+            ? `https://www.googleapis.com/upload/drive/v3/files/${existXlsx}?uploadType=multipart`
+            : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
+          await fetch(xlsxUrl, {
+            method: existXlsx ? 'PATCH' : 'POST',
+            headers: { Authorization: 'Bearer ' + token },
+            body: form
+          });
+        }
+      }
+
+      // ── 3. Save index.html backup ────────────────────────────────────────
+      // Fetch the current live index.html and save it
+      const htmlRes = await fetch(window.location.href);
+      const htmlContent = await htmlRes.text();
+      await driveUploadFile(token, folderId, `DAD_CommandCenter_${timestamp}.html`, htmlContent, 'text/html');
+
+      toast('✅ Saved to Google Drive → ' + DRIVE_FOLDER_NAME, 4000);
+      // Update last backup timestamp in UI
+      const el = document.getElementById('lastDriveSync');
+      if (el) el.textContent = new Date().toLocaleString('en-US', {month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'});
+      try { localStorage.setItem('lastDriveSync', new Date().toISOString()); } catch(e) {}
+
+    } catch(err) {
+      console.error('Drive save error:', err);
+      toast('⚠ Drive save failed: ' + (err.message || err), 5000);
+    }
+  });
 }
 
 // ══ DELETE FUNCTIONS ════════════════════════════════════════════════════════
