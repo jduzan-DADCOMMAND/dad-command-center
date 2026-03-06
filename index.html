@@ -841,7 +841,27 @@ const DB = {
     {year:2022,invoiced:214600.00,collected:198300.00},
     {year:2021,invoiced:176200.00,collected:155000.00},
   ],
-  proposals: []
+  proposals: [{
+    id: 1,
+    type: 'DAD',
+    status: 'SENT',
+    date: '2026-03-06',
+    ref: '',
+    company: 'CAMPUS PROPERTY MANAGEMENT',
+    contact: 'NATHAN SHOEMAKER',
+    clientaddr: '2302 W JOHN ST, CHAMPAIGN, IL 61821',
+    phone: '217-328-3657',
+    email: 'NATHAN@CPM-APTS.COM',
+    project: "ERWIN\'S APARTMENT RENOVATION PERMIT",
+    projaddr: '2302 W JOHN ST, CHAMPAIGN, IL 61821',
+    desc: "Work includes minor renovations to a portion of Irwin\'s apartment to accommodate a new bedroom unit and modifications to an existing secondary kitchen.",
+    scope: "Work to include drawings required to obtain permit with the city of Champaign. Mechanical, Electrical, sprinkler, fire alarm and Plumbing shall be treated as a design build once systems are determined in the facility. ADA will be accommodated along with the code study, descriptions and information for the buildout.",
+    value: 5400,
+    costs: '',
+    clarifications: "1. Excludes any services not listed above.\n2. Signage design, Landscape design and engineering, or any other engineering services not listed above are not included.\n3. Kitchen equipment design and layout are not included. A kitchen equipment specialist is expected to be available for consult.\n4. Sprinkler designs and layouts, if required, are not included and are typically design build.\n5. Delivery of municipal programs, including but not limited to: city tax incentive and enterprise zone determinations are not included.\n6. Architect construction observation, administration and management and/or CM services are not included herein.\n7. All drawing printing costs are a reimbursable expense and shall be billed separately.\n8. Contractor bidding & Negotiating Services are not included.",
+    notes: ''
+  }
+  ]
 };
 
 function loadDB() {
@@ -852,9 +872,13 @@ function loadDB() {
       // If the HTML has a newer data version, use HTML data and update localStorage
       if (!cached._dataVersion || cached._dataVersion < DATA_VERSION) {
         console.log('New data version detected — using HTML data:', DATA_VERSION);
+        // ALWAYS preserve user-created content from localStorage before flushing
+        if (cached.proposals && cached.proposals.length > 0) DB.proposals = cached.proposals;
+        if (cached.contacts  && cached.contacts.length  > 0) DB.contacts  = cached.contacts;
+        if (cached.notes     && cached.notes.length     > 0) DB.notes     = cached.notes;
         DB._dataVersion = DATA_VERSION;
         localStorage.setItem('dadCMD', JSON.stringify(DB));
-        return; // use the fresh HTML data as-is
+        return;
       }
       // Migrate stale abbreviations in localStorage before merging
       const clientMap = {
