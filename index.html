@@ -3177,17 +3177,25 @@ function buildReportHTML(range) {
 }
 function printDateRangeReport() {
   const range = getReportRange(); if (!range) return;
-  const w = window.open('', '_blank');
-  w.document.write(`<!DOCTYPE html><html><head><title>DAD Business Report</title>
-    <style>@media print{.no-print{display:none!important}}@page{margin:0.5in;size:landscape}</style>
+  const reportBody = buildReportHTML(range);
+  const fullHTML = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>DAD Business Report</title>
+    <style>@media print{.no-print{display:none!important}body{margin:0}}@page{margin:0.5in;size:landscape}</style>
     </head><body style="margin:0;background:#f4f5f7">
-    ${buildReportHTML(range)}
+    ${reportBody}
     <div class="no-print" style="text-align:center;padding:20px;display:flex;gap:12px;justify-content:center">
       <button onclick="window.print()" style="background:#0a1628;color:white;border:none;padding:12px 28px;border-radius:8px;font-size:14px;cursor:pointer">🖨 Print / Save PDF</button>
-      <button onclick="window.close()" style="background:#e0e0e0;color:#333;border:none;padding:12px 28px;border-radius:8px;font-size:14px;cursor:pointer">Close</button>
+      <button onclick="document.body.style.background='white';document.querySelector('.no-print').style.display='none';window.print();" style="background:#1a7a4a;color:white;border:none;padding:12px 28px;border-radius:8px;font-size:14px;cursor:pointer">🖨 Print Clean</button>
     </div>
-    </body></html>`);
-  w.document.close();
+    </body></html>`;
+  const blob = new Blob([fullHTML], {type:'text/html'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.target = '_blank';
+  a.rel = 'noopener';
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 1000);
 }
 function downloadReportXLSX() {
   const range = getReportRange(); if (!range) return;
@@ -3310,71 +3318,78 @@ async function saveToDrive() {
   toast('🔄 Connecting to Google Drive...', 2000);
   driveSignIn(async (token) => {
     try {
-      toast('🔄 Saving to Drive...', 2000);
+      toast('🔄 Finding your folder...', 2000);
       const folderId = await driveGetOrCreateFolder(token, DRIVE_FOLDER_NAME);
-
-      // ── 1. Save JSON backup ──────────────────────────────────────────────
       const timestamp = new Date().toISOString().slice(0,10);
-      const jsonStr = JSON.stringify(DB, null, 2);
-      await driveUploadFile(token, folderId, `DAD_CommandCenter_Backup_${timestamp}.json`, jsonStr, 'application/json');
+      let saved = [];
 
-      // ── 2. Save Excel workbook ───────────────────────────────────────────
+      // ── Helper: upload any file via FormData multipart ───────────────────
+      async function uploadToDrive(filename, blob) {
+        // Check if file already exists → update, else create
+        const q = encodeURIComponent(`name='${filename}' and '${folderId}' in parents and trashed=false`);
+        const sr = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)`, {
+          headers: { Authorization: 'Bearer ' + token }
+        });
+        const sd = await sr.json();
+        const existId = sd.files && sd.files.length > 0 ? sd.files[0].id : null;
+
+        const meta = existId ? { name: filename } : { name: filename, parents: [folderId] };
+        const form = new FormData();
+        form.append('metadata', new Blob([JSON.stringify(meta)], { type: 'application/json' }));
+        form.append('file', blob);
+
+        const url = existId
+          ? `https://www.googleapis.com/upload/drive/v3/files/${existId}?uploadType=multipart`
+          : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
+        const res = await fetch(url, {
+          method: existId ? 'PATCH' : 'POST',
+          headers: { Authorization: 'Bearer ' + token },
+          body: form
+        });
+        const result = await res.json();
+        if (result.error) throw new Error(result.error.message);
+        return result;
+      }
+
+      // ── 1. JSON backup ───────────────────────────────────────────────────
+      toast('🔄 Saving data backup...', 2000);
+      const jsonBlob = new Blob([JSON.stringify(DB, null, 2)], { type: 'application/json' });
+      await uploadToDrive(`DAD_Backup_${timestamp}.json`, jsonBlob);
+      saved.push('JSON');
+
+      // ── 2. Excel workbook ────────────────────────────────────────────────
       if (typeof XLSX !== 'undefined') {
+        toast('🔄 Saving Excel workbook...', 2000);
         const wb = buildXLSXWorkbook();
         if (wb) {
-          const wbOut = XLSX.write(wb, { bookType: 'xlsx', type: 'binary' });
-          // Convert binary to base64 for Drive upload
-          const b64 = btoa(wbOut.split('').map(c => c.charCodeAt(0)).reduce((a, c) => { a.push(String.fromCharCode(c)); return a; }, []).join(''));
-          const xlsxMime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
-          // Use blob upload for binary
-          const wbArray = new Uint8Array(wbOut.length);
-          for (let i = 0; i < wbOut.length; i++) wbArray[i] = wbOut.charCodeAt(i);
-          const xlsxBlob = new Blob([wbArray], { type: xlsxMime });
-
-          // Upload xlsx via resumable upload
-          const xlsxFilename = `DAD_CommandCenter_${timestamp}.xlsx`;
-          const q2 = encodeURIComponent(`name='${xlsxFilename}' and '${folderId}' in parents and trashed=false`);
-          const s2 = await (await fetch(`https://www.googleapis.com/drive/v3/files?q=${q2}&fields=files(id)`, {
-            headers: { Authorization: 'Bearer ' + token }
-          })).json();
-          const existXlsx = s2.files && s2.files.length > 0 ? s2.files[0].id : null;
-
-          const meta2 = existXlsx ? {} : { name: xlsxFilename, parents: [folderId] };
-          const form = new FormData();
-          form.append('metadata', new Blob([JSON.stringify(meta2)], { type: 'application/json' }));
-          form.append('file', xlsxBlob);
-
-          const xlsxUrl = existXlsx
-            ? `https://www.googleapis.com/upload/drive/v3/files/${existXlsx}?uploadType=multipart`
-            : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
-          await fetch(xlsxUrl, {
-            method: existXlsx ? 'PATCH' : 'POST',
-            headers: { Authorization: 'Bearer ' + token },
-            body: form
-          });
+          const wbOut = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+          const xlsxBlob = new Blob([wbOut], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+          await uploadToDrive(`DAD_CommandCenter_${timestamp}.xlsx`, xlsxBlob);
+          saved.push('Excel');
         }
       }
 
-      // ── 3. Save index.html backup ────────────────────────────────────────
-      // Fetch the current live index.html and save it
-      const htmlRes = await fetch(window.location.href);
-      const htmlContent = await htmlRes.text();
-      await driveUploadFile(token, folderId, `DAD_CommandCenter_${timestamp}.html`, htmlContent, 'text/html');
+      // ── 3. HTML app backup (serialize current DB into the HTML) ──────────
+      toast('🔄 Saving app backup...', 2000);
+      const currentHTML = document.documentElement.outerHTML;
+      const htmlBlob = new Blob([currentHTML], { type: 'text/html' });
+      await uploadToDrive(`DAD_CommandCenter_${timestamp}.html`, htmlBlob);
+      saved.push('HTML');
 
-      toast('✅ Saved to Google Drive → ' + DRIVE_FOLDER_NAME, 4000);
-      // Update last backup timestamp in UI
+      // ── Done ─────────────────────────────────────────────────────────────
+      toast('✅ Saved to Drive: ' + saved.join(', ') + ' → ' + DRIVE_FOLDER_NAME, 5000);
       const el = document.getElementById('lastDriveSync');
-      if (el) el.textContent = new Date().toLocaleString('en-US', {month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'});
+      if (el) el.textContent = new Date().toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'});
       try { localStorage.setItem('lastDriveSync', new Date().toISOString()); } catch(e) {}
 
     } catch(err) {
       console.error('Drive save error:', err);
-      toast('⚠ Drive save failed: ' + (err.message || err), 5000);
+      toast('⚠ Drive save failed: ' + (err.message || String(err)), 6000);
     }
   });
 }
 
-// ══ DELETE FUNCTIONS ════════════════════════════════════════════════════════
+
 function deleteCurrentProject() {
   const p = currentDetailProject; if(!p) return;
   if(!confirm('Delete project "'+p.client+' — '+(p.project||'')+'"?\nThis cannot be undone.')) return;
