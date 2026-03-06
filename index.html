@@ -374,7 +374,10 @@ body{font-family:var(--font-body);background:var(--grey1);color:var(--text);min-
   </div>
   <div class="section-header" style="margin-top:4px"><div class="section-title">SAVED PROPOSALS</div></div>
   <div id="proposalList"></div>
-  <div class="section-header" style="margin-top:8px"><div class="section-title">HISTORY</div></div>
+  <div class="section-header" style="margin-top:8px">
+    <div class="section-title">HISTORY</div>
+    <button class="btn btn-sm btn-outline" onclick="printHistoryReport()" style="font-size:11px;padding:4px 10px;margin-left:auto">🖨 Print PDF</button>
+  </div>
   <div id="historyList"></div>
   <div class="section-header" style="margin-top:8px"><div class="section-title">GOOGLE DRIVE BACKUP</div></div>
   <div class="card" style="margin-bottom:10px;border-left:3px solid #1a73e8">
@@ -1936,43 +1939,84 @@ function getReportRange() {
 }
 function buildReportHTML(range) {
   const { from, to, dFrom, dTo } = range;
-  const inRange = d => { if (!d) return false; const dt = new Date(d + 'T12:00:00'); return dt >= dFrom && dt <= dTo; };
-  const fmtR = n => '$' + (n || 0).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
-  const label = fmtDateLong(from) + ' — ' + fmtDateLong(to);
+  const inRange = d => { if (!d) return false; const dt = new Date(d+'T12:00:00'); return dt>=dFrom && dt<=dTo; };
+  const fmtR = n => '$'+(n||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const label = fmtDateLong(from) + ' \u2014 ' + fmtDateLong(to);
 
-  // Filter data
-  const payments  = DB.payments.filter(p => inRange(p.date));
-  const invoices  = DB.invoices.filter(i => inRange(i.date));
-  const projects  = DB.projects.filter(p => {
-    const hasInv = invoices.some(i => i.client === p.client);
-    const hasPay = payments.some(i => i.client === p.client);
-    return hasInv || hasPay || inRange(p.startDate);
-  });
+  const payments = DB.payments.filter(p => inRange(p.date));
+  const invoices = DB.invoices.filter(i => inRange(i.date));
 
-  const totalBilled    = invoices.reduce((s, i) => s + (i.amount || 0), 0);
-  const totalCollected = payments.reduce((s, p) => s + (p.amount || 0), 0);
-  const totalOutstanding = invoices.filter(i => i.status !== 'COMPLETED').reduce((s, i) => s + (i.balance || 0), 0);
+  // ── Determine if we have detail data or need to fall back to history ───────
+  const fromYr = dFrom.getFullYear(), toYr = dTo.getFullYear();
+  const singleYear = fromYr === toYr;
+
+  // Pull matching history rows for the range
+  const historyRows = (DB.history||[]).filter(h => h.year >= fromYr && h.year <= toYr);
+
+  // Use history totals if no detail payments exist for this range
+  const hasDetail = payments.length > 0 || invoices.length > 0;
+  const totalBilled     = hasDetail ? invoices.reduce((s,i)=>s+(i.amount||0),0)
+                        : historyRows.reduce((s,h)=>s+(h.invoiced||0),0);
+  const totalCollected  = hasDetail ? payments.reduce((s,p)=>s+(p.amount||0),0)
+                        : historyRows.reduce((s,h)=>s+(h.collected||0),0);
+  const totalOutstanding = invoices.filter(i=>i.status!=='COMPLETED').reduce((s,i)=>s+(i.balance||0),0);
 
   // Row helper
-  const tr = (cells, header=false) => `<tr>${cells.map(c =>
-    `<t${header?'h':'d'} style="padding:7px 10px;border:1px solid #ddd;font-size:${header?'11':'12'}px;${header?'background:#0a1628;color:#fff;font-weight:600;text-transform:uppercase;letter-spacing:.5px':''}text-align:${typeof c==='number'||String(c).startsWith('$')?'right':'left'}">${c}</t${header?'h':'d'}>`).join('')}</tr>`;
+  const tr = (cells, hdr=false) => `<tr>${cells.map(c=>`<t${hdr?'h':'d'} style="padding:7px 10px;border:1px solid #ddd;font-size:${hdr?'11':'12'}px;${hdr?'background:#0a1628;color:#fff;font-weight:600;text-transform:uppercase;letter-spacing:.5px;':''}text-align:${typeof c==='number'||String(c).startsWith('$')?'right':'left'}">${c}</t${hdr?'h':'d'}>`).join('')}</tr>`;
 
-  // Payments table
-  const payRows = payments.length
-    ? [...payments].sort((a,b) => new Date(a.date) - new Date(b.date))
-        .map(p => tr([fmtDateLong(p.date), p.client, p.project||'', 'Inv #'+(p.invNum||'—'), p.method||'CHECK', fmtR(p.amount)]))
-        .join('')
-    : `<tr><td colspan="6" style="padding:12px;text-align:center;color:#888;font-size:12px">No payments in this period</td></tr>`;
+  // ── Payments section ────────────────────────────────────────────────────────
+  let paySection = '';
+  if (hasDetail && payments.length) {
+    const payRows = [...payments].sort((a,b)=>new Date(a.date)-new Date(b.date))
+      .map(p=>tr([fmtDateLong(p.date),p.client,p.project||'','Inv #'+(p.invNum||'—'),p.method||'CHECK',fmtR(p.amount)])).join('');
+    paySection = `
+    <div style="font-size:13px;font-weight:bold;color:#0a1628;border-bottom:2px solid #0a1628;padding-bottom:6px;margin-bottom:12px">PAYMENTS RECEIVED</div>
+    <table style="width:100%;border-collapse:collapse;margin-bottom:24px">
+      ${tr(['Date','Client','Project','Invoice','Method','Amount'],true)}
+      ${payRows}
+      ${tr(['','','','','<strong>TOTAL</strong>','<strong>'+fmtR(totalCollected)+'</strong>'])}
+    </table>`;
+  } else if (!hasDetail && historyRows.length) {
+    const histPayRows = historyRows.sort((a,b)=>a.year-b.year)
+      .map(h=>tr([String(h.year),'All clients','','','',fmtR(h.collected)])).join('');
+    paySection = `
+    <div style="font-size:13px;font-weight:bold;color:#0a1628;border-bottom:2px solid #0a1628;padding-bottom:6px;margin-bottom:12px">PAYMENTS RECEIVED <span style="font-size:11px;font-weight:normal;color:#888">(annual summary)</span></div>
+    <table style="width:100%;border-collapse:collapse;margin-bottom:24px">
+      ${tr(['Year','','','','','Collected'],true)}
+      ${histPayRows}
+      ${historyRows.length>1?tr(['','','','','<strong>TOTAL</strong>','<strong>'+fmtR(totalCollected)+'</strong>']):''}
+    </table>`;
+  } else {
+    paySection = `<div style="margin-bottom:24px;padding:12px;background:#f8f9fc;border-radius:6px;font-size:12px;color:#888;text-align:center">No payment records for this period</div>`;
+  }
 
-  // Invoices table
-  const invRows = invoices.length
-    ? [...invoices].sort((a,b) => new Date(a.date) - new Date(b.date))
-        .map(i => tr([fmtDateLong(i.date), i.client, i.project||'', 'Inv #'+i.invNum, fmtR(i.amount),
-          i.status === 'COMPLETED' ? fmtR(i.paid) : fmtR(i.paid||0),
-          i.status === 'COMPLETED' ? '$0.00' : fmtR(i.balance||0),
-          `<span style="padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600;background:${i.status==='COMPLETED'?'#d4edda':i.status==='PAST DUE'?'#f8d7da':'#fff3cd'};color:${i.status==='COMPLETED'?'#155724':i.status==='PAST DUE'?'#721c24':'#856404'}">${i.status}</span>`]))
-        .join('')
-    : `<tr><td colspan="8" style="padding:12px;text-align:center;color:#888;font-size:12px">No invoices in this period</td></tr>`;
+  // ── Invoices section ────────────────────────────────────────────────────────
+  let invSection = '';
+  if (hasDetail && invoices.length) {
+    const invRows = [...invoices].sort((a,b)=>new Date(a.date)-new Date(b.date))
+      .map(i=>tr([fmtDateLong(i.date),i.client,i.project||'','Inv #'+i.invNum,fmtR(i.amount),
+        fmtR(i.paid||0),i.status==='COMPLETED'?'$0.00':fmtR(i.balance||0),
+        `<span style="padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600;background:${i.status==='COMPLETED'?'#d4edda':i.status==='PAST DUE'?'#f8d7da':'#fff3cd'};color:${i.status==='COMPLETED'?'#155724':i.status==='PAST DUE'?'#721c24':'#856404'}">${i.status}</span>`])).join('');
+    invSection = `
+    <div style="font-size:13px;font-weight:bold;color:#0a1628;border-bottom:2px solid #0a1628;padding-bottom:6px;margin-bottom:12px">INVOICES ISSUED</div>
+    <table style="width:100%;border-collapse:collapse;margin-bottom:28px">
+      ${tr(['Date','Client','Project','Inv #','Amount','Paid','Balance','Status'],true)}
+      ${invRows}
+      ${tr(['','','','','<strong>'+fmtR(totalBilled)+'</strong>','','<strong>'+fmtR(totalOutstanding)+'</strong>',''])}
+    </table>`;
+  } else if (!hasDetail && historyRows.length) {
+    const histInvRows = historyRows.sort((a,b)=>a.year-b.year)
+      .map(h=>tr([String(h.year),'All clients','','',fmtR(h.invoiced),'','',''])).join('');
+    invSection = `
+    <div style="font-size:13px;font-weight:bold;color:#0a1628;border-bottom:2px solid #0a1628;padding-bottom:6px;margin-bottom:12px">INVOICES ISSUED <span style="font-size:11px;font-weight:normal;color:#888">(annual summary)</span></div>
+    <table style="width:100%;border-collapse:collapse;margin-bottom:28px">
+      ${tr(['Year','','','','Invoiced','','',''],true)}
+      ${histInvRows}
+      ${historyRows.length>1?tr(['','','','','<strong>'+fmtR(totalBilled)+'</strong>','','','']):''}
+    </table>`;
+  } else {
+    invSection = `<div style="margin-bottom:28px;padding:12px;background:#f8f9fc;border-radius:6px;font-size:12px;color:#888;text-align:center">No invoice records for this period</div>`;
+  }
 
   return `<div style="max-width:760px;margin:0 auto;padding:32px 28px;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:1.6;color:#111;background:white">
     <div style="display:flex;align-items:flex-start;justify-content:space-between;border-bottom:3px solid #0a1628;padding-bottom:16px;margin-bottom:24px">
@@ -1984,17 +2028,16 @@ function buildReportHTML(range) {
         <div style="font-size:11px;color:#666">Generated: ${new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}</div>
       </div>
     </div>
-
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-bottom:28px">
       <div style="border:2px solid #0a1628;border-radius:8px;padding:14px;text-align:center">
         <div style="font-size:10px;font-weight:600;letter-spacing:1px;color:#666;text-transform:uppercase;margin-bottom:6px">Total Billed</div>
         <div style="font-size:22px;font-weight:900;color:#0a1628">${fmtR(totalBilled)}</div>
-        <div style="font-size:11px;color:#666">${invoices.length} invoice${invoices.length!==1?'s':''}</div>
+        <div style="font-size:11px;color:#666">${hasDetail?invoices.length+' invoice'+(invoices.length!==1?'s':''):historyRows.length+' year'+(historyRows.length!==1?'s':'')}</div>
       </div>
       <div style="border:2px solid #1a7a4a;border-radius:8px;padding:14px;text-align:center">
         <div style="font-size:10px;font-weight:600;letter-spacing:1px;color:#666;text-transform:uppercase;margin-bottom:6px">Total Collected</div>
         <div style="font-size:22px;font-weight:900;color:#1a7a4a">${fmtR(totalCollected)}</div>
-        <div style="font-size:11px;color:#666">${payments.length} payment${payments.length!==1?'s':''}</div>
+        <div style="font-size:11px;color:#666">${hasDetail?payments.length+' payment'+(payments.length!==1?'s':''):'from history'}</div>
       </div>
       <div style="border:2px solid ${totalOutstanding>0?'#cc2200':'#ccc'};border-radius:8px;padding:14px;text-align:center">
         <div style="font-size:10px;font-weight:600;letter-spacing:1px;color:#666;text-transform:uppercase;margin-bottom:6px">Outstanding</div>
@@ -2002,27 +2045,15 @@ function buildReportHTML(range) {
         <div style="font-size:11px;color:#666">unpaid balance</div>
       </div>
     </div>
-
-    <div style="font-size:13px;font-weight:bold;color:#0a1628;border-bottom:2px solid #0a1628;padding-bottom:6px;margin-bottom:12px">PAYMENTS RECEIVED</div>
-    <table style="width:100%;border-collapse:collapse;margin-bottom:24px">
-      ${tr(['Date','Client','Project','Invoice','Method','Amount'], true)}
-      ${payRows}
-      ${payments.length ? tr(['','','','','<strong>TOTAL</strong>','<strong>'+fmtR(totalCollected)+'</strong>']) : ''}
-    </table>
-
-    <div style="font-size:13px;font-weight:bold;color:#0a1628;border-bottom:2px solid #0a1628;padding-bottom:6px;margin-bottom:12px">INVOICES ISSUED</div>
-    <table style="width:100%;border-collapse:collapse;margin-bottom:28px">
-      ${tr(['Date','Client','Project','Inv #','Amount','Paid','Balance','Status'], true)}
-      ${invRows}
-      ${invoices.length ? tr(['','','','','<strong>'+fmtR(totalBilled)+'</strong>','','<strong>'+fmtR(totalOutstanding)+'</strong>','']) : ''}
-    </table>
-
+    ${paySection}
+    ${invSection}
     <div style="border-top:2px solid #0a1628;padding-top:10px;display:flex;justify-content:space-between;align-items:center">
       <img src="${DOC_LOGO}" alt="DA.D" style="height:24px;width:auto;opacity:.5">
-      <div style="font-size:9px;color:#999;letter-spacing:.5px">DUZAN ARCHITECTURE + DESIGN INC. • CONFIDENTIAL • ALL RIGHTS RESERVED</div>
+      <div style="font-size:9px;color:#999;letter-spacing:.5px">DUZAN ARCHITECTURE + DESIGN INC. \u2022 CONFIDENTIAL \u2022 ALL RIGHTS RESERVED</div>
     </div>
   </div>`;
 }
+
 function printDateRangeReport() {
   const range = getReportRange(); if (!range) return;
   const reportBody = buildReportHTML(range);
@@ -2237,6 +2268,81 @@ async function saveToDrive() {
   });
 }
 
+
+function buildHistoryReportHTML() {
+  const fmtR = n => '$'+(n||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const history = [...(DB.history||[])].sort((a,b)=>b.year-a.year);
+  const totalInv = history.reduce((s,h)=>s+(h.invoiced||0),0);
+  const totalCol = history.reduce((s,h)=>s+(h.collected||0),0);
+  const rows = history.map(h => {
+    const diff = (h.collected||0)-(h.invoiced||0);
+    return `<tr>
+      <td style="padding:10px 14px;border:1px solid #ddd;font-size:14px;font-weight:700;color:#0a1628">${h.year}</td>
+      <td style="padding:10px 14px;border:1px solid #ddd;font-size:13px;text-align:right">${fmtR(h.invoiced)}</td>
+      <td style="padding:10px 14px;border:1px solid #ddd;font-size:13px;text-align:right;color:#1a7a4a;font-weight:600">${fmtR(h.collected)}</td>
+      <td style="padding:10px 14px;border:1px solid #ddd;font-size:13px;text-align:right;color:${diff<0?'#cc2200':diff>0?'#1a7a4a':'#666'}">${fmtR(diff)}</td>
+      <td style="padding:10px 14px;border:1px solid #ddd;font-size:13px;text-align:right;color:#666">${h.invoiced>0?Math.round((h.collected/h.invoiced)*100)+'%':'—'}</td>
+    </tr>`;
+  }).join('');
+  return `<div style="max-width:680px;margin:0 auto;padding:32px 28px;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:1.6;color:#111;background:white">
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;border-bottom:3px solid #0a1628;padding-bottom:16px;margin-bottom:24px">
+      <img src="${DOC_LOGO}" alt="DA.D" style="height:52px;width:auto;">
+      <div style="text-align:right">
+        <div style="font-size:18px;font-weight:900;letter-spacing:2px;color:#0a1628">ANNUAL HISTORY</div>
+        <div style="font-size:11px;color:#666;margin-top:4px">DUZAN ARCHITECTURE + DESIGN INC.</div>
+        <div style="font-size:11px;color:#666">Generated: ${new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}</div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:28px">
+      <div style="border:2px solid #0a1628;border-radius:8px;padding:14px;text-align:center">
+        <div style="font-size:10px;font-weight:600;letter-spacing:1px;color:#666;text-transform:uppercase;margin-bottom:6px">All-Time Invoiced</div>
+        <div style="font-size:24px;font-weight:900;color:#0a1628">${fmtR(totalInv)}</div>
+        <div style="font-size:11px;color:#666">${history.length} years on record</div>
+      </div>
+      <div style="border:2px solid #1a7a4a;border-radius:8px;padding:14px;text-align:center">
+        <div style="font-size:10px;font-weight:600;letter-spacing:1px;color:#666;text-transform:uppercase;margin-bottom:6px">All-Time Collected</div>
+        <div style="font-size:24px;font-weight:900;color:#1a7a4a">${fmtR(totalCol)}</div>
+        <div style="font-size:11px;color:#666">${totalInv>0?Math.round((totalCol/totalInv)*100)+'% collection rate':''}</div>
+      </div>
+    </div>
+    <table style="width:100%;border-collapse:collapse;margin-bottom:28px">
+      <tr>
+        <th style="padding:9px 14px;border:1px solid #ddd;background:#0a1628;color:#fff;font-size:11px;text-transform:uppercase;letter-spacing:.5px;text-align:left">Year</th>
+        <th style="padding:9px 14px;border:1px solid #ddd;background:#0a1628;color:#fff;font-size:11px;text-transform:uppercase;letter-spacing:.5px;text-align:right">Invoiced</th>
+        <th style="padding:9px 14px;border:1px solid #ddd;background:#0a1628;color:#fff;font-size:11px;text-transform:uppercase;letter-spacing:.5px;text-align:right">Collected</th>
+        <th style="padding:9px 14px;border:1px solid #ddd;background:#0a1628;color:#fff;font-size:11px;text-transform:uppercase;letter-spacing:.5px;text-align:right">Difference</th>
+        <th style="padding:9px 14px;border:1px solid #ddd;background:#0a1628;color:#fff;font-size:11px;text-transform:uppercase;letter-spacing:.5px;text-align:right">% Collected</th>
+      </tr>
+      ${rows}
+      <tr style="background:#f8f9fc">
+        <td style="padding:10px 14px;border:1px solid #ddd;font-weight:700;font-size:13px">TOTAL</td>
+        <td style="padding:10px 14px;border:1px solid #ddd;font-weight:700;font-size:13px;text-align:right">${fmtR(totalInv)}</td>
+        <td style="padding:10px 14px;border:1px solid #ddd;font-weight:700;font-size:13px;text-align:right;color:#1a7a4a">${fmtR(totalCol)}</td>
+        <td style="padding:10px 14px;border:1px solid #ddd;font-weight:700;font-size:13px;text-align:right;color:${totalCol-totalInv<0?'#cc2200':'#1a7a4a'}">${fmtR(totalCol-totalInv)}</td>
+        <td style="padding:10px 14px;border:1px solid #ddd;font-weight:700;font-size:13px;text-align:right">${totalInv>0?Math.round((totalCol/totalInv)*100)+'%':'—'}</td>
+      </tr>
+    </table>
+    <div style="border-top:2px solid #0a1628;padding-top:10px;display:flex;justify-content:space-between;align-items:center">
+      <img src="${DOC_LOGO}" alt="DA.D" style="height:24px;width:auto;opacity:.5">
+      <div style="font-size:9px;color:#999;letter-spacing:.5px">DUZAN ARCHITECTURE + DESIGN INC. \u2022 CONFIDENTIAL \u2022 ALL RIGHTS RESERVED</div>
+    </div>
+  </div>`;
+}
+function printHistoryReport() {
+  const body = buildHistoryReportHTML();
+  const fullHTML = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>DAD Annual History</title>
+    <style>@media print{.no-print{display:none!important}body{margin:0}}@page{margin:0.6in;size:portrait}</style>
+    </head><body style="margin:0;background:#f4f5f7">${body}
+    <div class="no-print" style="text-align:center;padding:20px">
+      <button onclick="window.print()" style="background:#0a1628;color:white;border:none;padding:12px 28px;border-radius:8px;font-size:14px;cursor:pointer">🖨 Print / Save PDF</button>
+    </div></body></html>`;
+  const blob = new Blob([fullHTML],{type:'text/html'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href=url; a.target='_blank'; a.rel='noopener';
+  document.body.appendChild(a); a.click();
+  setTimeout(()=>{ document.body.removeChild(a); URL.revokeObjectURL(url); },1000);
+}
 
 function deleteCurrentProject() {
   const p = currentDetailProject; if(!p) return;
