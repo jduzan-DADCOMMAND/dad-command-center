@@ -1673,7 +1673,10 @@ function markInvoicePaid(id) {
     }
   }
   saveDB();
-  toast('✅ Paid — payment record created');
+  renderInvoices();
+  renderPayments();
+  renderDashboard();
+  toast('✅ Invoice marked paid — payment record created');
 }
 
 // ══ INVOICES ═════════════════════════════════════════════════════════════════
