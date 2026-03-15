@@ -392,6 +392,17 @@ body{font-family:var(--font-body);background:var(--grey1);color:var(--text);min-
     <div style="font-size:11px;color:var(--grey4);margin-top:8px;text-align:center">Last synced: <span id="lastDriveSync">Never</span></div>
   </div>
   <div class="section-header" style="margin-top:8px"><div class="section-title">EXPORT &amp; DATA</div></div>
+  <div class="card" style="margin-bottom:10px;border:2px solid #c8960c;background:linear-gradient(135deg,#1a1a2e 0%,#16213e 100%)">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">
+      <div style="font-size:32px">💾</div>
+      <div>
+        <div style="font-weight:700;color:#f0c040;font-size:14px">SAVE APP TO FILE</div>
+        <div style="font-size:12px;color:#aaa">Downloads a fresh HTML file with ALL your current data baked in. Open from Google Drive — nothing stored in the browser.</div>
+      </div>
+    </div>
+    <button class="btn" onclick="saveAppToFile()" style="width:100%;background:#c8960c;color:#000;font-weight:700;font-size:14px;padding:12px">💾 Save &amp; Download Now</button>
+    <div style="font-size:11px;color:#888;margin-top:8px;text-align:center">Last saved: <span id="lastFileSaveTime">—</span></div>
+  </div>
   <div class="card" style="cursor:pointer;margin-bottom:10px" onclick="exportData()">
     <div style="display:flex;align-items:center;gap:12px">
       <div style="font-size:32px">📊</div>
@@ -775,6 +786,7 @@ let driveAccessToken = null;
 let driveTokenExpiry = 0;
 
 const DATA_VERSION = '2026-03-06-v3';
+const SAVED_FILE = false; // set to true in downloaded copies — skips localStorage
 
 const DB = {
   projects: [
@@ -783,7 +795,7 @@ const DB = {
     {id:3,year:2025,client:'MONICALS',project:'Monicals New Building Proto',city:'Rantoul',state:'IL',propVal:57400,contract:57400,billed:28460,collected:28460,outstanding:28940,status:'ACTIVE',notes:'Paid $28,460. Still owed $28,940'},
     {id:4,year:2025,client:'MID ILLINOIS CONCRETE',project:'Kraft Foods - Entry & Landscape',city:'',state:'IL',propVal:45000,contract:45000,billed:45000,collected:45000,outstanding:0,status:'COMPLETED',notes:'Paid in full Feb 23 2026'},
     {id:5,year:2025,client:'WILLIAMSON CONSTRUCTION',project:'Dollar Tree - Davenport IA',city:'Davenport',state:'IA',propVal:18000,contract:18000,billed:18000,collected:0,outstanding:18000,status:'PAST DUE',notes:''},
-    {id:6,year:2025,client:'UNIVERSITY GROUP',project:'1005 S 6th St Apts - Reno',city:'Champaign',state:'IL',propVal:19200,contract:43200,billed:24000,collected:21600,outstanding:2400,status:'BILLED',notes:'Elevations and existing floor plans provided by Michael. Inv1 $21,600 paid Feb 2026. Inv2 $2,400 past due.'},
+    {id:6,year:2025,client:'UNIVERSITY GROUP',project:'1005 S 6th St Apts - Reno',city:'Champaign',state:'IL',propVal:19200,contract:40800,billed:40800,collected:19200,outstanding:21600,status:'PAST DUE',notes:'Elevations and existing floor plans provided by Michael. Inv1 $19,200 paid Feb 2026. Inv2 $21,600 past due.'},
     {id:7,year:2026,client:'CODY CLEM',project:'Buchana Shouse',city:'Homer',state:'IL',propVal:1000,contract:1000,billed:1000,collected:0,outstanding:1000,status:'BILLED',notes:''},
     {id:18,client:'SIDNEY TOWNSHIP',project:'New Sidney Township Building',city:'Sidney',state:'IL',propVal:57800,contract:0,billed:0,collected:0,outstanding:0,status:'PROPOSED',notes:'Proposal sent 03/02/2026. 80x160 new public building + storage. Deposit 30% = $17,340 due to start. Contact: Tim Osterbur 217-688-2841 timo@sidneytwp.org'},
     {id:8,client:'ADKISSON',project:'New Recreation Center',city:'Tuscola',state:'IL',propVal:42800,contract:42800,billed:0,collected:0,outstanding:0,status:'PROPOSED',notes:'Proposal sent 02/23/2026. Deposit 30% = $12,840 due to start.'},
@@ -810,9 +822,9 @@ const DB = {
     {id:10,invNum:'3',client:'MID ILLINOIS CONCRETE',project:'Kraft Foods',date:'2025-11-01',amount:15000,paid:15000,balance:0,status:'COMPLETED',notes:'',paidAt:'2026-02-23T12:00:00.000Z'},
     {id:11,invNum:'1',client:'WILLIAMSON CONSTRUCTION',project:'Dollar Tree - Davenport IA',date:'2025-08-01',amount:10000,paid:0,balance:10000,status:'PAST DUE',notes:''},
     {id:16,invNum:'2',client:'WILLIAMSON CONSTRUCTION',project:'Dollar Tree - Davenport IA',date:'2026-02-23',amount:8000,paid:0,balance:8000,status:'PAST DUE',notes:'Final Drawings'},
-    {id:12,invNum:'1',client:'UNIVERSITY GROUP',project:'1005 S 6th St Apts',date:'2025-09-01',amount:21600,paid:21600,balance:0,status:'COMPLETED',notes:'Paid Feb 2026',paidAt:'2026-02-28T12:00:00.000Z'},
-    {id:17,invNum:'2',client:'UNIVERSITY GROUP',project:'1005 S 6th St Apts',date:'2026-02-17',amount:2400,paid:0,balance:2400,status:'PAST DUE',notes:'Additional services for permit submittal'},
-    {id:13,invNum:'1',client:'CODY CLEM',project:'Buchana Shouse',date:'2026-01-15',amount:1000,paid:0,balance:1000,status:'BILLED',notes:''},
+    {id:12,invNum:'1',client:'UNIVERSITY GROUP',project:'1005 S 6th St Apts',date:'2025-12-04',amount:19200,paid:19200,balance:0,status:'COMPLETED',notes:'Onsite data logging, code & city research, drawing set up, design development and construction drawings for permit. Paid Feb 2026.',paidAt:'2026-02-28T12:00:00.000Z'},
+    {id:17,invNum:'2',client:'UNIVERSITY GROUP',project:'1005 S 6th St Apts',date:'2026-02-17',amount:21600,paid:0,balance:21600,status:'PAST DUE',notes:'Onsite data logging, code & city research, drawing set up + additional services for permit submittal ($2,400)'},
+    {id:13,invNum:'1',client:'CODY CLEM',project:'Buchana Shouse',date:'2026-02-17',amount:1000,paid:0,balance:1000,status:'BILLED',notes:'Residential shouse drawings minimal'},
     {id:14,invNum:'1',client:'HENSON',project:'Tiny Home',date:'2026-02-15',amount:300,paid:300,balance:0,status:'COMPLETED',notes:'Paid in full'},
     {id:15,invNum:'1',client:'GOODACRE',project:'Goodacre Addition',date:'2026-01-25',amount:500,paid:500,balance:0,status:'COMPLETED',notes:''},
   ],
@@ -830,7 +842,7 @@ const DB = {
     {id:11,client:'MID ILLINOIS CONCRETE',project:'Kraft Foods',invNum:'1',amount:15000,date:'2025-07-28',method:'CHECK',year:2025,notes:''},
     {id:12,client:'MID ILLINOIS CONCRETE',project:'Kraft Foods',invNum:'2',amount:15000,date:'2025-09-05',method:'CHECK',year:2025,notes:''},
     {id:13,client:'HENSON',project:'',invNum:'1',amount:300,date:'2026-02-20',method:'CHECK',year:2026,notes:''},
-    {id:14,client:'UNIVERSITY GROUP',project:'1005 S 6th St Apts - Reno',invNum:'1',amount:21600,date:'2026-02-28',method:'CHECK',year:2026,notes:''},
+    {id:14,client:'UNIVERSITY GROUP',project:'1005 S 6th St Apts - Reno',invNum:'1',amount:19200,date:'2026-02-28',method:'CHECK',year:2026,notes:'Payment for Invoice #1'},
     {id:15,client:'WILLIAMSON CONSTRUCTION',project:'Dollar Tree - Davenport IA',invNum:'1',amount:3500,date:'2025-11-19',method:'CHECK',year:2025,notes:''},
     {id:16,client:'MID ILLINOIS CONCRETE',project:'Kraft Foods',invNum:'3',amount:15000,date:'2025-11-01',method:'CHECK',year:2025,notes:''}
   ]
@@ -841,30 +853,99 @@ const DB = {
     {year:2022,invoiced:214600.00,collected:198300.00},
     {year:2021,invoiced:176200.00,collected:155000.00},
   ],
-  proposals: [{
-    id: 1,
-    type: 'DAD',
-    status: 'SENT',
-    date: '2026-03-06',
-    ref: '',
-    company: 'CAMPUS PROPERTY MANAGEMENT',
-    contact: 'NATHAN SHOEMAKER',
-    clientaddr: '2302 W JOHN ST, CHAMPAIGN, IL 61821',
-    phone: '217-328-3657',
-    email: 'NATHAN@CPM-APTS.COM',
-    project: "ERWIN\'S APARTMENT RENOVATION PERMIT",
-    projaddr: '2302 W JOHN ST, CHAMPAIGN, IL 61821',
-    desc: "Work includes minor renovations to a portion of Irwin\'s apartment to accommodate a new bedroom unit and modifications to an existing secondary kitchen.",
-    scope: "Work to include drawings required to obtain permit with the city of Champaign. Mechanical, Electrical, sprinkler, fire alarm and Plumbing shall be treated as a design build once systems are determined in the facility. ADA will be accommodated along with the code study, descriptions and information for the buildout.",
-    value: 5400,
-    costs: '',
-    clarifications: "1. Excludes any services not listed above.\n2. Signage design, Landscape design and engineering, or any other engineering services not listed above are not included.\n3. Kitchen equipment design and layout are not included. A kitchen equipment specialist is expected to be available for consult.\n4. Sprinkler designs and layouts, if required, are not included and are typically design build.\n5. Delivery of municipal programs, including but not limited to: city tax incentive and enterprise zone determinations are not included.\n6. Architect construction observation, administration and management and/or CM services are not included herein.\n7. All drawing printing costs are a reimbursable expense and shall be billed separately.\n8. Contractor bidding & Negotiating Services are not included.",
-    notes: ''
+  proposals: [
+  {
+    id:1,
+    type:'DAD',
+    status:'SENT',
+    date:'2026-03-09',
+    ref:'',
+    company:'CAMPUS PROPERTY MANAGEMENT',
+    contact:'NATHAN SHOEMAKER',
+    clientaddr:'2302 W JOHN ST, CHAMPAIGN, IL 61821',
+    phone:'217-328-3657',
+    email:'NATHAN@CPM-APTS.COM',
+    project:"ERWIN\'S APARTMENT RENOVATION PERMIT",
+    projaddr:'2302 W JOHN ST, CHAMPAIGN, IL 61821',
+    desc:"Work includes minor renovations to a portion of Irwin\'s apartment to accommodate a new bedroom unit and modifications to an existing secondary kitchen.",
+    scope:"Work to include drawings required to obtain permit with the city of Champaign. Mechanical, Electrical, sprinkler, fire alarm and Plumbing shall be treated as a design build once systems are determined in the facility. ADA will be accommodated along with the code study, descriptions and information for the buildout.",
+    value:2600,
+    costs:'',
+    clarifications:"1. Excludes any services not listed above.\n2. Signage design, Landscape design and engineering, or any other engineering services not listed above are not included.\n3. Kitchen equipment design and layout are not included. A kitchen equipment specialist is expected to be available for consult.\n4. Sprinkler designs and layouts, if required, are not included and are typically design build.\n5. Delivery of municipal programs, including but not limited to: city tax incentive and enterprise zone determinations are not included.\n6. Architect construction observation, administration and management and/or CM services are not included herein.\n7. All drawing printing costs are a reimbursable expense and shall be billed separately.\n8. Contractor bidding & Negotiating Services are not included.",
+    notes:''
+  },
+  {
+    id:2,
+    type:'DAD',
+    status:'SENT',
+    date:'2026-02-23',
+    ref:'',
+    company:'BRETT ADKISSON',
+    contact:'BRETT ADKISSON',
+    clientaddr:'200 N PARKE ST, TUSCOLA, IL',
+    phone:'217-369-2465',
+    email:'BRETT@SAVIORROOFING.COM',
+    project:'ADKISSON RECREATION GYM',
+    projaddr:'101 N EMBARRAS AVE, TUSCOLA, IL',
+    desc:"The project consists of retrofitting an existing metal building of approximately 80ft x 120ft from its current condition into a new recreation facility. The new build will consist of installing a reclaimed basketball court from the Atwood gym along with additional new flooring for new pickle ball and volleyball facilities. The space will also include a small lounge area with vending machines and new public toilets. Existing batting nets may be incorporated along with new batting cage equipment in a portion of the facility. The existing concrete floors will be required to be addressed to level out the surface and/or accommodate the new and refurbished flooring.\n\nInternational Building Code would require the occupant load to be figured at 50 square foot gross (Exercise Room Typically) and no sprinklers required since the building is 940 square foot well under the 12,000 square foot minimum for a fire area. At 50 square feet per person the occupant load would be 20 with each sex requiring 10 occupants for fixture needs. The city has apparently adopted the 2021 building codes edition along with the Illinois state mandated 2024 Energy Code. ADA access to the facility and parking accommodations will be required.",
+    scope:"The space will require all new Architectural drawings, HVAC design, electrical design, plumbing layout and drawings to meet all current commercial codes and for city review and approvals.\n\nNo civil efforts, surveys, landscaping or structural engineering would be included with this proposal.",
+    value:42800,
+    costs:'',
+    clarifications:"1. Excludes any services not listed above.\n2. Signage design, Landscape design and engineering, or any other engineering services not listed above are not included.\n3. Kitchen equipment design and layout are not included. A kitchen equipment specialist is expected to be available for consult.\n4. Sprinkler designs and layouts, if required, are not included and are typically design build.\n5. Delivery of municipal programs, including but not limited to: city tax incentive and enterprise zone determinations are not included.\n6. Architect construction observation, administration and management and/or CM services are not included herein.\n7. All drawing printing costs are a reimbursable expense and shall be billed separately.\n8. Contractor bidding & Negotiating Services are not included.",
+    notes:''
+  },
+  {
+    id:3,
+    type:'DAD',
+    status:'SENT',
+    date:'2026-03-02',
+    ref:'',
+    company:'SIDNEY TOWNSHIP',
+    contact:'TIM OSTERBUR',
+    clientaddr:'208 S DAVID ST, SIDNEY, IL 61877',
+    phone:'217-688-2841',
+    email:'TIMO@SIDNEYTWP.ORG',
+    project:'NEW SIDNEY TOWNSHIP BUILDING',
+    projaddr:'2141 COUNTY ROAD 1000N, SIDNEY, IL',
+    desc:"Provide Bid Documents for a new set of Public Building Construction drawings. Building will consist of a roughly 80x160 footprint with conditioned space for a new meeting room, 4 offices, kitchenette, men\'s and women\'s toilets, storage and a general office/private session room. Ceiling heights around 10ft tall at this conditioned area. Another space shall be created for general outdoor storage but shall be enclosed and heated with min 16ft tall garage door openings, be of approximately 15ft x 30ft in size and likely a 20ft ceiling height to accommodate equipment. All additional shop space shall be considered cold storage and have a gravel floor.\n\nProject will be required to be done with prevailing wage rates. General and ADA parking shall be established with the drawings. A survey will be required and is included for basic layout purposes but shall be done by others and not under this contract. All mechanical, electrical and plumbing drawings shall be included with the drawing set. Sprinklers, if needed, are always by others and typically considered design build. Fire alarm design, drawings and installations shall be by others.",
+    scope:"1. Provide full Construction Document set for bidding of the new building.\n2. Outline scope of work known for project for bidders to assure equal bids.\n3. Provide all bidding documentation for each bidder to use with bid.\n4. Answer all bidding contractor questions and disperse Addendums as needed for the bidding process.\n5. Receive bids at determined physical location, and/or by email, and publicly read aloud & document all bids for award to lowest qualified bidder.\n6. Organize & create Owner and Contractor Contract Document for execution by all parties.\n7. Meet and discuss with contractor onsite to review bid and determine all aspects are covered and accounted for prior to award of construction.\n8. Verify contractor has all insurance and documentation submitted to the owner and/or jurisdictions required prior to construction activities onsite.\n9. Provide periodic job site visits during project construction at owners request. Maximum of 5 included herein.",
+    value:57800,
+    costs:"The project costs for this new pole barn building with finished and unfinished space is all prevailing wages and this evaluation assumes all work is contracted efforts. The expectation of this project cost is estimated to range, at best, between $180-$250/SF for building and does not necessarily include the parking and site work but is only typically within 5 feet of the building pad. These numbers can change depending on a variety of factors including, but not limited to: volunteer or municipal employee efforts, miscellaneous costs, furnishings, bidding contractor schedules and commodity pricing.",
+    clarifications:"1. Any services not listed above.\n2. Public Notice newspaper advertisement efforts and costs associated are excluded (sample will be provided for owners efforts).\n3. Design services of any sort are excluded unless otherwise stated above.\n4. Construction observation, administration, management and/or control not included unless otherwise stated above.\n5. A deposit of 30% is required to apply to schedule and start services and can be mailed to the above address along with the signed proposal.",
+    notes:''
+  },
+  {
+    id:4,
+    type:'DAD',
+    status:'LOST',
+    date:'2026-02-27',
+    ref:'',
+    company:'SUNNYKPORLLC',
+    contact:'TOWEH KPOR',
+    clientaddr:'',
+    phone:'217-721-9504',
+    email:'KTOWEH@YAHOO.COM',
+    project:'NEW DUPLEX AND ADU UNIT',
+    projaddr:'507 E WASHINGTON ST, CHAMPAIGN, IL',
+    desc:"The project shall consist of the development of a site to include a new duplex building with an ADU (Accessible Dwelling Unit) in the back. This project is all new construction and expected to be all wood frame 2x6 walls with A frame rafter engineered joists either on concrete slab or crawlspace. Shingle roof and vinyl siding or some equivalent.",
+    scope:"1. Programming, Schematic Design and Design Development Phases\n   - Sketch provided for general layout expectations and needs. No work included.\n2. Construction Documents\n   a. Create drawings needed by the city to review and approve the drawings for permit and start of construction.\n   b. Along with the permit set of drawings will be the data needed for a contractor to bid and construct the structures. Including: Floor plans, foundation plans, roof plans, elevations, wall sections as needed, and details required for constructability. MEP drawings shall be included.\n   c. Address all local, state and national jurisdiction codes as needed for the building.\n   d. Collaborate with all team members for coordination of drawings, i.e. mechanical, electrical, plumbing and civil drawings.\n   e. Register, complete and submit, with drawings, to the municipality as needed on the owners behalf.\n   f. Submit 100% drawing set to customer for review, comments and approvals.",
+    value:38400,
+    costs:'',
+    clarifications:"1. Excludes any services not listed above.\n2. Signage design, Landscape design, and civil engineering, or any other engineering services not listed above are not included.\n3. Sprinkler designs and layouts, if required, are not included and is typically design build.\n4. Delivery of municipal programs, including but not limited to: city tax incentive and enterprise zone determinations are not included.\n5. Architect construction observation, administration, and management and/or CM services are not included herein.\n6. All drawing printing costs are a reimbursable expense and shall be billed separately.\n7. Contractor bidding & Negotiating Services are not included.\n8. Project will require a deposit to start work along with execution and return of this document. Deposit Amount required is 30% of listed value.",
+    notes:'Rejected by client'
   }
-  ]
+]
+
 };
 
 function loadDB() {
+  // If this is a saved file copy, the DB is already baked in — skip localStorage entirely
+  if (SAVED_FILE) {
+    console.log('Saved file detected — using baked-in data, ignoring localStorage');
+    DB._dataVersion = DATA_VERSION;
+    try { localStorage.setItem('dadCMD', JSON.stringify(DB)); } catch(e) {}
+    return;
+  }
   try {
     const s = localStorage.getItem('dadCMD');
     if (s) {
@@ -940,6 +1021,90 @@ function loadDB() {
     }
   } catch(e) {}
 }
+// ══ SAVE APP TO FILE ════════════════════════════════════════════════════════
+// The permanent data persistence solution.
+// Bakes current DB state into a fresh HTML download.
+// Open the downloaded file from Google Drive — your data is always inside it.
+function saveAppToFile() {
+  try {
+    // Serialize current DB (from memory, not localStorage)
+    const dbJSON = JSON.stringify(DB);
+
+    // Get the current page HTML
+    const fullHTML = document.documentElement.outerHTML;
+
+    // Replace the DB declaration in the HTML with current live data
+    // Target: const DB = { ... }; followed by function loadDB
+    const dbStart = fullHTML.indexOf('const DB = {');
+    const dbEnd   = fullHTML.indexOf('\n};\n\nfunction loadDB');
+    if (dbStart === -1 || dbEnd === -1) {
+      toast('⚠ Could not locate DB in file — save failed', 4000);
+      return;
+    }
+
+    // Build replacement DB block from live data
+    // Generate unique version timestamp so saved file always wins
+    const saveVersion = '2026-03-06-v3';
+    // Flip SAVED_FILE flag to true in the downloaded copy
+    const newHTML2 = fullHTML.replace(
+      'const SAVED_FILE = false;',
+      'const SAVED_FILE = true; '
+    );
+    const liveDB = buildDBBlock();
+    const newHTML = newHTML2.substring(0, newHTML2.indexOf('const DB = {')) + liveDB + newHTML2.substring(newHTML2.indexOf('\n};\n\nfunction loadDB'));
+    // newHTML built above with SAVED_FILE=true and live DB
+
+    // Download as HTML file
+    const timestamp = new Date().toISOString().slice(0,10);
+    const filename  = 'DAD_CommandCenter_' + timestamp + '.html';
+    const blob = new Blob([newHTML], { type: 'text/html' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 1000);
+    toast('💾 Saved: ' + filename + ' — move to Google Drive', 5000);
+    try { localStorage.setItem('lastFileSave', new Date().toISOString()); } catch(e) {}
+  } catch(e) {
+    toast('⚠ Save failed: ' + e.message, 5000);
+    console.error('saveAppToFile error:', e);
+  }
+}
+
+function buildDBBlock() {
+  // Serialize DB object back into JS source code format
+  const esc = s => String(s||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\n/g,'\\n');
+  const fmtProj = p => `    {id:${p.id},year:${p.year},client:'${esc(p.client)}',project:'${esc(p.project)}',city:'${esc(p.city)}',state:'${esc(p.state)}',propVal:${p.propVal||0},contract:${p.contract||0},billed:${p.billed||0},collected:${p.collected||0},outstanding:${p.outstanding||0},status:'${esc(p.status)}',notes:'${esc(p.notes)}',jobLog:${JSON.stringify(p.jobLog||[])},startDate:'${p.startDate||''}'}`;
+  const fmtInv  = i => `    {id:${i.id},invNum:'${esc(i.invNum)}',client:'${esc(i.client)}',project:'${esc(i.project)}',date:'${i.date||''}',amount:${i.amount||0},paid:${i.paid||0},balance:${i.balance||0},status:'${esc(i.status)}',notes:'${esc(i.notes||'')}',paidAt:'${i.paidAt||''}'}`;
+  const fmtPay  = p => `    {id:${p.id},client:'${esc(p.client)}',project:'${esc(p.project)}',invNum:'${esc(p.invNum||'')}',amount:${p.amount||0},date:'${p.date||''}',method:'${esc(p.method||'CHECK')}',year:${p.year||new Date().getFullYear()},notes:'${esc(p.notes||'')}'}`;
+  const fmtProp = p => `  {id:${p.id},type:'${esc(p.type)}',status:'${esc(p.status)}',date:'${p.date||''}',ref:'${esc(p.ref||'')}',company:'${esc(p.company)}',contact:'${esc(p.contact)}',clientaddr:'${esc(p.clientaddr)}',phone:'${esc(p.phone)}',email:'${esc(p.email)}',project:'${esc(p.project)}',projaddr:'${esc(p.projaddr)}',desc:'${esc(p.desc)}',scope:'${esc(p.scope)}',value:${p.value||0},costs:'${esc(p.costs||'')}',clarifications:'${esc(p.clarifications||'')}',notes:'${esc(p.notes||'')}'}`;
+  const fmtHist = h => `    {year:${h.year},invoiced:${h.invoiced||0},collected:${h.collected||0}}`;
+  const fmtCont = c => `    {id:${c.id},name:'${esc(c.name)}',company:'${esc(c.company)}',phone:'${esc(c.phone)}',email:'${esc(c.email)}',notes:'${esc(c.notes||'')}'}`;
+
+  return `const DB = {
+  projects: [
+${(DB.projects||[]).map(fmtProj).join(',\n')}
+  ],
+  invoices: [
+${(DB.invoices||[]).map(fmtInv).join(',\n')}
+  ],
+  payments: [
+${(DB.payments||[]).map(fmtPay).join(',\n')}
+  ],
+  history: [
+${(DB.history||[]).map(fmtHist).join(',\n')}
+  ],
+  proposals: [
+${(DB.proposals||[]).map(fmtProp).join(',\n')}
+  ],
+  contacts: [
+${(DB.contacts||[]).map(fmtCont).join(',\n')}
+  ],
+  notes: ${JSON.stringify(DB.notes||'')},
+  _dataVersion: '${DATA_VERSION}'
+}`;
+}
+
 function saveDB() {
   try { DB._dataVersion = DATA_VERSION;
     localStorage.setItem('dadCMD', JSON.stringify(DB)); } catch(e) {}
@@ -1508,7 +1673,10 @@ function markInvoicePaid(id) {
     }
   }
   saveDB();
-  toast('✅ Paid — payment record created');
+  renderInvoices();
+  renderPayments();
+  renderDashboard();
+  toast('✅ Invoice marked paid — payment record created');
 }
 
 // ══ INVOICES ═════════════════════════════════════════════════════════════════
@@ -1690,6 +1858,12 @@ function renderMore() {
       </div>`).join('')
     :'<div style="font-size:13px;color:var(--grey4);padding:12px 4px">No proposals yet — create one above.</div>';
   // History
+  // Show unsaved indicator if localStorage differs from last save
+  try {
+    const lastSaved = localStorage.getItem('lastFileSave');
+    const el = document.getElementById('lastFileSaveTime');
+    if (el) el.textContent = lastSaved ? new Date(lastSaved).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}) : 'Never — save now!';
+  } catch(e) {}
   document.getElementById('historyList').innerHTML=DB.history.map(h=>`
     <div class="history-year" style="padding-bottom:10px">
       <div style="display:flex;align-items:center;justify-content:space-between;width:100%">
